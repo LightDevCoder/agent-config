@@ -1,0 +1,97 @@
+import path from "node:path";
+import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ToolContext } from "./context.js";
+import { Profile, ProfileSchema } from "../../profile/schema.js";
+import { validateProfileAgainstJsonSchema } from "../../profile/validator.js";
+
+export const SaveProfileInputSchema = {
+  profile: z.record(z.any()).describe("Complete Agent Config profile document to save"),
+  workspace: z
+    .string()
+    .optional()
+    .describe("Optional workspace path override (defaults to profile.scope.workspace)"),
+};
+
+export interface SaveProfileResult {
+  success: boolean;
+  message: string;
+  profile: Profile;
+}
+
+export async function handleSaveProfile(
+  params: { profile: unknown; workspace?: string },
+  context: ToolContext
+): Promise<SaveProfileResult> {
+  // 1. Validate raw profile against canonical JSON schema before any stripping
+  const jsonValidation = validateProfileAgainstJsonSchema(params.profile);
+  if (!jsonValidation.valid) {
+    throw new Error(
+      `Profile failed canonical schema validation:\n${jsonValidation.errors?.join("\n")}`
+    );
+  }
+
+  const parsed = ProfileSchema.parse(params.profile);
+  const targetWorkspace = path.resolve(
+    params.workspace || parsed.scope.workspace || process.cwd()
+  );
+
+  // Synchronize scope.workspace if workspace override was specified
+  const profileToSave: Profile = {
+    ...parsed,
+    scope: {
+      ...parsed.scope,
+      workspace: targetWorkspace,
+    },
+    updated_at: new Date().toISOString(),
+  };
+
+  if (!profileToSave.created_at) {
+    profileToSave.created_at = profileToSave.updated_at;
+  }
+
+  // Inspect current host capabilities to validate inventory & efforts
+  const adapter = await context.adapterRegistry.resolveAdapter(
+    targetWorkspace,
+    profileToSave.host.id
+  );
+  const hostCapabilities = await adapter.inspectCapabilities(targetWorkspace);
+
+  // Save atomically with validation against host capabilities
+  await context.profileStore.saveProfile(profileToSave, {
+    hostCapabilities,
+  });
+
+  return {
+    success: true,
+    message: `Profile saved successfully for host '${profileToSave.host.id}' at workspace '${targetWorkspace}'.`,
+    profile: profileToSave,
+  };
+}
+
+export function registerSaveProfileTool(
+  server: McpServer,
+  context: ToolContext
+): void {
+  server.registerTool(
+    "save_profile",
+    {
+      description:
+        "Atomically validate and save a user-confirmed Agent Config profile.",
+      inputSchema: SaveProfileInputSchema,
+    },
+    async (params) => {
+      try {
+        const result = await handleSaveProfile(params, context);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err: any) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `save_profile error: ${err.message}` }],
+        };
+      }
+    }
+  );
+}
