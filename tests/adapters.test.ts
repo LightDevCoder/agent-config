@@ -59,7 +59,7 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
       expect(caps.capabilities.per_agent_model_selection?.state).toBe("available");
       expect(caps.capabilities.configuration_mutation?.state).toBe("available");
       expect(caps.capabilities.configuration_mutation?.supports_native_files).toBe(true);
-      expect(caps.supported_effort_values).toEqual(["low", "medium", "high", "max"]);
+      expect(caps.supported_effort_values).toEqual(["low", "medium", "high"]);
     });
 
     it("OpenCode adapter reports available capabilities backed by evidence", async () => {

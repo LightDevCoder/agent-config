@@ -18,10 +18,15 @@ export const PreviewConfigurationInputSchema = {
     .describe("Host identifier (optional, auto-detected from adapter if omitted)"),
 };
 
+export interface ExtendedPreviewResult extends ConfigurationRenderResult {
+  preview_hash: string;
+  expires_at: string;
+}
+
 export async function handlePreviewConfiguration(
   params: { config: unknown; workspace?: string; host_id?: string },
   context: ToolContext
-): Promise<ConfigurationRenderResult> {
+): Promise<ExtendedPreviewResult> {
   const workspace = path.resolve(params.workspace || process.cwd());
   const adapter = await context.adapterRegistry.resolveAdapter(
     workspace,
@@ -37,13 +42,17 @@ export async function handlePreviewConfiguration(
   );
 
   // Register the preview in PreviewManager to snapshot target hashes and guard apply
-  await context.previewManager.createPreview(
+  const stored = await context.previewManager.createPreview(
     workspace,
     renderResult,
     params.config
   );
 
-  return renderResult;
+  return {
+    ...renderResult,
+    preview_hash: stored.preview_hash,
+    expires_at: stored.expires_at || "",
+  };
 }
 
 export function registerPreviewConfigurationTool(

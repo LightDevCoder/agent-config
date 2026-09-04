@@ -1,7 +1,8 @@
-import fs from "node:fs";
 import fsp from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import * as jsonc from "jsonc-parser";
 import {
   HostAdapter,
   HostCapabilities,
@@ -16,13 +17,11 @@ import { createUnifiedDiff } from "../diff.js";
 
 /**
  * OpenCode host adapter implementing authentic configuration inspection (JSON/JSONC),
- * provider/model enumeration, subagent and MCP topology inspection, apply, and validation.
+ * provider/model enumeration, variant discovery, config layering, apply, and validation.
  */
 export class OpenCodeAdapter implements HostAdapter {
   readonly id = "opencode";
   readonly name = "OpenCode Adapter";
-
-  private effortValues = ["low", "medium", "high"];
 
   async identifyHost(workspaceRoot?: string): Promise<boolean> {
     if (workspaceRoot) {
@@ -50,7 +49,6 @@ export class OpenCodeAdapter implements HostAdapter {
       return true;
     }
 
-    // Only inspect global ~/.config/opencode if not checking within an explicit workspace
     if (!workspaceRoot) {
       const globalConfigPath = this.getGlobalConfigPath();
       return !!globalConfigPath && fs.existsSync(globalConfigPath);
@@ -63,6 +61,19 @@ export class OpenCodeAdapter implements HostAdapter {
     const models = await this.inspectModels(workspaceRoot);
     const effortValues = await this.inspectEffortValues(workspaceRoot);
 
+    // Collect all variants across models for effort/variant capability
+    const allVariants = new Set<string>(effortValues);
+    for (const m of models) {
+      if (m.features) {
+        for (const f of m.features) {
+          if (f.startsWith("variant:")) {
+            allVariants.add(f.slice("variant:".length));
+          }
+        }
+      }
+    }
+    const combinedEffortValues = Array.from(allVariants);
+
     return {
       host_id: "opencode",
       adapter_id: "opencode",
@@ -70,8 +81,8 @@ export class OpenCodeAdapter implements HostAdapter {
       observed_at: new Date().toISOString(),
       platform: `${os.platform()}-${os.arch()}`,
       available_models: models,
-      supported_effort_values: effortValues,
-      default_effort_value: "high",
+      supported_effort_values: combinedEffortValues.length > 0 ? combinedEffortValues : effortValues,
+      default_effort_value: combinedEffortValues.includes("high") ? "high" : combinedEffortValues[0] || "default",
       capabilities: {
         subagents: {
           state: "available",
@@ -132,60 +143,145 @@ export class OpenCodeAdapter implements HostAdapter {
 
   async inspectModels(workspaceRoot?: string): Promise<HostModel[]> {
     const models: HostModel[] = [];
-    const configPath = this.resolveConfigFilePath(workspaceRoot);
+    const configLayers = this.getEffectiveConfigPaths(workspaceRoot);
 
-    if (configPath && fs.existsSync(configPath)) {
-      try {
-        const content = fs.readFileSync(configPath, "utf-8");
-        const parsed = this.parseJsonc(content);
+    for (const configPath of configLayers) {
+      if (fs.existsSync(configPath)) {
+        try {
+          const content = fs.readFileSync(configPath, "utf-8");
+          const parsed = this.parseJsonc(content);
 
-        // 1. Extract models defined in provider dictionary
-        if (parsed.provider && typeof parsed.provider === "object") {
-          for (const [providerKey, providerVal] of Object.entries(parsed.provider)) {
-            const pVal = providerVal as any;
-            if (pVal && pVal.models && typeof pVal.models === "object") {
-              for (const modelKey of Object.keys(pVal.models)) {
-                const canonicalId = `${providerKey}/${modelKey}`;
-                models.push({
-                  id: canonicalId,
-                  label: modelKey,
-                  state: "available",
-                  features: ["tools", "chat"],
-                  evidence: {
-                    kind: "host-config",
-                    locator: configPath,
-                  },
-                });
+          // 1. Extract models defined in provider dictionary
+          if (parsed.provider && typeof parsed.provider === "object") {
+            for (const [providerKey, providerVal] of Object.entries(parsed.provider)) {
+              const pVal = providerVal as any;
+              if (pVal && pVal.models && typeof pVal.models === "object") {
+                for (const [modelKey, modelObj] of Object.entries<any>(pVal.models)) {
+                  const canonicalId = `${providerKey}/${modelKey}`;
+                  const features: string[] = ["tools", "chat"];
+
+                  // Check for model-specific variants
+                  if (modelObj && Array.isArray(modelObj.variants)) {
+                    for (const v of modelObj.variants) {
+                      features.push(`variant:${v}`);
+                    }
+                  } else if (modelObj && typeof modelObj.variants === "object") {
+                    for (const v of Object.keys(modelObj.variants)) {
+                      features.push(`variant:${v}`);
+                    }
+                  }
+
+                  if (!models.some((m) => m.id === canonicalId)) {
+                    models.push({
+                      id: canonicalId,
+                      label: modelKey,
+                      state: "available",
+                      features,
+                      evidence: {
+                        kind: "host-config",
+                        locator: configPath,
+                      },
+                    });
+                  }
+                }
               }
             }
           }
-        }
 
-        // 2. Extract current selected model if specified and not already in list
-        if (parsed.model && typeof parsed.model === "string") {
-          if (!models.some((m) => m.id === parsed.model)) {
-            models.unshift({
-              id: parsed.model,
-              label: parsed.model,
-              state: "available",
-              features: ["tools", "chat"],
-              evidence: {
-                kind: "host-config",
-                locator: configPath,
-              },
-            });
+          // 2. Extract current selected model if specified and not already in list
+          if (parsed.model && typeof parsed.model === "string") {
+            if (!models.some((m) => m.id === parsed.model)) {
+              models.unshift({
+                id: parsed.model,
+                label: parsed.model,
+                state: "available",
+                features: ["tools", "chat"],
+                evidence: {
+                  kind: "host-config",
+                  locator: configPath,
+                },
+              });
+            }
           }
+        } catch {
+          // If a file is malformed, skip it during inspection
         }
-      } catch {
-        // Ignore read/parse errors and return whatever models found
       }
     }
 
     return models;
   }
 
-  async inspectEffortValues(_workspaceRoot?: string): Promise<string[]> {
-    return [...this.effortValues];
+  async inspectEffortValues(workspaceRoot?: string): Promise<string[]> {
+    const values = new Set<string>(["low", "medium", "high"]);
+    const configLayers = this.getEffectiveConfigPaths(workspaceRoot);
+
+    for (const configPath of configLayers) {
+      if (fs.existsSync(configPath)) {
+        try {
+          const content = fs.readFileSync(configPath, "utf-8");
+          const parsed = this.parseJsonc(content);
+          if (parsed.provider && typeof parsed.provider === "object") {
+            for (const providerVal of Object.values<any>(parsed.provider)) {
+              if (providerVal?.models && typeof providerVal.models === "object") {
+                for (const mObj of Object.values<any>(providerVal.models)) {
+                  if (Array.isArray(mObj?.variants)) {
+                    for (const v of mObj.variants) values.add(String(v));
+                  } else if (mObj?.variants && typeof mObj.variants === "object") {
+                    for (const v of Object.keys(mObj.variants)) values.add(v);
+                  }
+                }
+              }
+            }
+          }
+        } catch {
+          // Skip
+        }
+      }
+    }
+
+    return Array.from(values);
+  }
+
+  /**
+   * Resolves the appropriate variant for a given model and policy/effort.
+   */
+  resolveVariantForModel(
+    modelId: string,
+    requestedEffortOrPolicy: string | undefined,
+    availableModels: HostModel[]
+  ): string | undefined {
+    if (!requestedEffortOrPolicy) return undefined;
+
+    const modelInfo = availableModels.find((m) => m.id === modelId);
+    const variants: string[] = [];
+    if (modelInfo?.features) {
+      for (const f of modelInfo.features) {
+        if (f.startsWith("variant:")) {
+          variants.push(f.slice("variant:".length));
+        }
+      }
+    }
+
+    // If model has explicit variants
+    if (variants.length > 0) {
+      if (requestedEffortOrPolicy === "highest-supported") {
+        if (variants.includes("max")) return "max";
+        return variants[variants.length - 1];
+      }
+      if (requestedEffortOrPolicy === "lowest-sufficient" || requestedEffortOrPolicy === "lowest-supported") {
+        return variants[0];
+      }
+      if (variants.includes(requestedEffortOrPolicy)) {
+        return requestedEffortOrPolicy;
+      }
+      return variants[variants.length - 1];
+    }
+
+    // Default effort mapping if no specific variants listed
+    if (requestedEffortOrPolicy === "highest-supported") return "high";
+    if (requestedEffortOrPolicy === "lowest-sufficient" || requestedEffortOrPolicy === "lowest-supported") return "low";
+    return requestedEffortOrPolicy;
   }
 
   async renderConfiguration(
@@ -202,41 +298,80 @@ export class OpenCodeAdapter implements HostAdapter {
       profile?.single_model?.model ||
       "default";
 
+    const targetEffort =
+      plan.execution?.effort ||
+      plan.controller?.effort ||
+      (profile?.single_model?.execution_effort && "value" in profile.single_model.execution_effort
+        ? profile.single_model.execution_effort.value
+        : profile?.single_model?.execution_effort && "policy" in profile.single_model.execution_effort
+        ? profile.single_model.execution_effort.policy
+        : "high");
+
     let existingContent: string | null = null;
-    let configObj: Record<string, any> = {
-      $schema: "https://opencode.ai/config.json",
-    };
+    let initialText = "{\n  \"$schema\": \"https://opencode.ai/config.json\"\n}\n";
 
     if (fs.existsSync(targetFile)) {
       existingContent = await fsp.readFile(targetFile, "utf-8");
-      try {
-        configObj = this.parseJsonc(existingContent);
-      } catch {
-        configObj = { $schema: "https://opencode.ai/config.json" };
+      // Fail closed: parse strictly with jsonc-parser. If invalid, throw clear error.
+      const parseErrors: jsonc.ParseError[] = [];
+      jsonc.parse(existingContent, parseErrors, { allowTrailingComma: true });
+      if (parseErrors.length > 0) {
+        throw new Error(
+          `OpenCode configuration file at '${targetFile}' contains syntax errors. Rejecting mutation to prevent configuration loss.`
+        );
       }
+      initialText = existingContent;
     }
 
-    // Set model
-    configObj.model = targetModel;
+    const availableModels = await this.inspectModels(workspace);
 
-    // If decomposed with work_items, configure agents
+    // Apply minimal edits using jsonc.modify to preserve comments, formatting, and unrelated keys
+    const formatting = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
+    let currentText = initialText;
+
+    // 1. Update model
+    const modelEdits = jsonc.modify(currentText, ["model"], targetModel, formatting);
+    currentText = jsonc.applyEdits(currentText, modelEdits);
+
+    // 2. If single-pass has variant/effort
+    const mainVariant = this.resolveVariantForModel(targetModel, targetEffort, availableModels);
+    if (mainVariant && mainVariant !== "default") {
+      const variantEdits = jsonc.modify(currentText, ["variant"], mainVariant, formatting);
+      currentText = jsonc.applyEdits(currentText, variantEdits);
+    }
+
+    // 3. If decomposed with work_items, configure agents with model and variant
     if (plan.work_items && plan.work_items.length > 0) {
-      configObj.agent = configObj.agent || {};
       for (const item of plan.work_items) {
-        configObj.agent[item.ticket_id] = {
-          ...configObj.agent[item.ticket_id],
+        const itemVariant = this.resolveVariantForModel(
+          item.model,
+          item.effort_policy || item.effort,
+          availableModels
+        );
+
+        const agentPatch: Record<string, any> = {
           model: item.model,
         };
+        if (itemVariant && itemVariant !== "default") {
+          agentPatch.variant = itemVariant;
+        }
+
+        const agentEdits = jsonc.modify(
+          currentText,
+          ["agent", item.ticket_id],
+          agentPatch,
+          formatting
+        );
+        currentText = jsonc.applyEdits(currentText, agentEdits);
       }
     }
 
-    const newContent = JSON.stringify(configObj, null, 2) + "\n";
-    const diff = createUnifiedDiff(targetFile, existingContent, newContent);
+    const diff = createUnifiedDiff(targetFile, existingContent, currentText);
 
     const files: RenderedFile[] = [
       {
         path: targetFile,
-        content: newContent,
+        content: currentText,
       },
     ];
 
@@ -322,10 +457,12 @@ export class OpenCodeAdapter implements HostAdapter {
         const agentConfig = parsed.agent?.[item.ticket_id];
         if (!agentConfig) {
           errors.push(`Missing agent config for work item '${item.ticket_id}'`);
-        } else if (agentConfig.model !== item.model) {
-          errors.push(
-            `Agent '${item.ticket_id}' model mismatch: expected '${item.model}', actual '${agentConfig.model}'`
-          );
+        } else {
+          if (agentConfig.model !== item.model) {
+            errors.push(
+              `Agent '${item.ticket_id}' model mismatch: expected '${item.model}', actual '${agentConfig.model}'`
+            );
+          }
         }
       }
     }
@@ -339,6 +476,26 @@ export class OpenCodeAdapter implements HostAdapter {
         : `OpenCode configuration drift detected: ${errors.join("; ")}`,
       errors: valid ? undefined : errors,
     };
+  }
+
+  getEffectiveConfigPaths(workspaceRoot?: string): string[] {
+    const paths: string[] = [];
+    const globalPath = this.getGlobalConfigPath();
+    if (globalPath) paths.push(globalPath);
+
+    if (workspaceRoot) {
+      const dotJsonc = path.join(workspaceRoot, ".opencode", "opencode.jsonc");
+      if (fs.existsSync(dotJsonc)) paths.push(dotJsonc);
+      const dotJson = path.join(workspaceRoot, ".opencode", "opencode.json");
+      if (fs.existsSync(dotJson)) paths.push(dotJson);
+
+      const localJsonc = path.join(workspaceRoot, "opencode.jsonc");
+      if (fs.existsSync(localJsonc)) paths.push(localJsonc);
+      const localJson = path.join(workspaceRoot, "opencode.json");
+      if (fs.existsSync(localJson)) paths.push(localJson);
+    }
+
+    return paths;
   }
 
   private resolveConfigFilePath(workspaceRoot?: string): string | null {
@@ -359,7 +516,7 @@ export class OpenCodeAdapter implements HostAdapter {
     return this.getGlobalConfigPath();
   }
 
-  private determineTargetConfigPath(workspaceRoot: string): string {
+  determineTargetConfigPath(workspaceRoot: string): string {
     const localJsonc = path.join(workspaceRoot, "opencode.jsonc");
     if (fs.existsSync(localJsonc)) return localJsonc;
 
@@ -386,12 +543,12 @@ export class OpenCodeAdapter implements HostAdapter {
     return null;
   }
 
-  private parseJsonc(content: string): any {
-    // Strip single-line (//) and multi-line (/* */) comments while preserving strings
-    const stripped = content.replace(
-      /\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g,
-      (match, comment) => (comment ? "" : match)
-    );
-    return JSON.parse(stripped);
+  parseJsonc(content: string): any {
+    const errors: jsonc.ParseError[] = [];
+    const parsed = jsonc.parse(content, errors, { allowTrailingComma: true });
+    if (errors.length > 0) {
+      throw new Error(`JSONC parse error at offset ${errors[0].offset} (code: ${errors[0].error})`);
+    }
+    return parsed;
   }
 }

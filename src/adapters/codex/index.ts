@@ -15,77 +15,13 @@ import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
 
 /**
- * Codex host adapter implementing native inspection, model enumeration,
+ * Codex host adapter implementing authentic inspection, model enumeration,
  * discrete effort values, configuration rendering (TOML), apply, and validation.
+ * Strictly avoids hardcoding speculative model inventories or unverified concurrency/max effort.
  */
 export class CodexAdapter implements HostAdapter {
   readonly id = "codex";
   readonly name = "Codex Adapter";
-
-  private defaultModels: HostModel[] = [
-    {
-      id: "gpt-5.6-sol",
-      label: "GPT-5.6 Sol",
-      state: "available",
-      features: ["tools", "reasoning"],
-      evidence: {
-        kind: "host-config",
-        locator: ".codex/config.toml",
-      },
-    },
-    {
-      id: "gpt-5.6-terra",
-      label: "GPT-5.6 Terra",
-      state: "available",
-      features: ["tools", "reasoning"],
-      evidence: {
-        kind: "host-config",
-        locator: ".codex/config.toml",
-      },
-    },
-    {
-      id: "gpt-5.6-luna",
-      label: "GPT-5.6 Luna",
-      state: "available",
-      features: ["tools", "fast"],
-      evidence: {
-        kind: "host-config",
-        locator: ".codex/config.toml",
-      },
-    },
-    {
-      id: "gpt-5.4",
-      label: "GPT-5.4",
-      state: "available",
-      features: ["tools", "vision"],
-      evidence: {
-        kind: "host-config",
-        locator: ".codex/config.toml",
-      },
-    },
-    {
-      id: "gpt-5.4-mini",
-      label: "GPT-5.4 Mini",
-      state: "available",
-      features: ["tools", "fast"],
-      evidence: {
-        kind: "host-config",
-        locator: ".codex/config.toml",
-      },
-    },
-    {
-      id: "o3-mini",
-      label: "o3-mini",
-      state: "available",
-      features: ["tools", "reasoning"],
-      evidence: {
-        kind: "host-config",
-        locator: ".codex/config.toml",
-      },
-    },
-  ];
-
-  private effortValues = ["low", "medium", "high", "max"];
 
   async identifyHost(workspaceRoot?: string): Promise<boolean> {
     if (workspaceRoot) {
@@ -108,7 +44,6 @@ export class CodexAdapter implements HostAdapter {
       return true;
     }
 
-    // Only inspect global ~/.codex if not checking within an explicit workspace
     if (!workspaceRoot) {
       const codexHome = path.join(os.homedir(), ".codex");
       return fs.existsSync(codexHome);
@@ -121,6 +56,32 @@ export class CodexAdapter implements HostAdapter {
     const models = await this.inspectModels(workspaceRoot);
     const effortValues = await this.inspectEffortValues(workspaceRoot);
 
+    // Concurrency: derive strictly from config or environment, else state is unknown
+    let concurrencyLimit: number | undefined;
+    let concurrencyState: "available" | "unknown" = "unknown";
+
+    const configPath = this.resolveConfigPath(workspaceRoot);
+    if (configPath && fs.existsSync(configPath)) {
+      try {
+        const content = fs.readFileSync(configPath, "utf-8");
+        const concurrencyStr = this.extractTomlValue(content, "max_concurrency");
+        if (concurrencyStr && !isNaN(parseInt(concurrencyStr, 10))) {
+          concurrencyLimit = parseInt(concurrencyStr, 10);
+          concurrencyState = "available";
+        }
+      } catch {
+        // Skip
+      }
+    }
+
+    if (!concurrencyLimit && process.env.CODEX_MAX_CONCURRENCY) {
+      const parsed = parseInt(process.env.CODEX_MAX_CONCURRENCY, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        concurrencyLimit = parsed;
+        concurrencyState = "available";
+      }
+    }
+
     return {
       host_id: "codex",
       adapter_id: "codex",
@@ -129,7 +90,7 @@ export class CodexAdapter implements HostAdapter {
       platform: `${os.platform()}-${os.arch()}`,
       available_models: models,
       supported_effort_values: effortValues,
-      default_effort_value: "high",
+      default_effort_value: effortValues.includes("high") ? "high" : effortValues[0],
       capabilities: {
         subagents: {
           state: "available",
@@ -157,7 +118,7 @@ export class CodexAdapter implements HostAdapter {
           scopes: ["current-session", "new-session", "per-agent"],
           evidence: {
             kind: "host-config",
-            locator: ".codex/config.toml",
+            locator: configPath || ".codex/config.toml",
           },
         },
         per_agent_model_selection: {
@@ -168,11 +129,11 @@ export class CodexAdapter implements HostAdapter {
           },
         },
         concurrency: {
-          state: "available",
-          max_concurrency: 4,
+          state: concurrencyState,
+          max_concurrency: concurrencyLimit,
           evidence: {
-            kind: "host-runtime",
-            locator: "worker limit",
+            kind: "host-config",
+            locator: configPath || "environment",
           },
         },
         configuration_mutation: {
@@ -181,7 +142,7 @@ export class CodexAdapter implements HostAdapter {
           supports_session_mutation: false,
           evidence: {
             kind: "host-config",
-            locator: ".codex/config.toml",
+            locator: configPath || ".codex/config.toml",
           },
         },
       },
@@ -189,38 +150,77 @@ export class CodexAdapter implements HostAdapter {
   }
 
   async inspectModels(workspaceRoot?: string): Promise<HostModel[]> {
-    const models = [...this.defaultModels];
+    const models: HostModel[] = [];
+    const configPath = this.resolveConfigPath(workspaceRoot);
 
-    // Check workspace .codex/config.toml if present for configured model
-    if (workspaceRoot) {
-      const configPath = path.join(workspaceRoot, ".codex", "config.toml");
-      if (fs.existsSync(configPath)) {
-        try {
-          const content = fs.readFileSync(configPath, "utf-8");
-          const configuredModel = this.extractTomlString(content, "model");
-          if (configuredModel && !models.some((m) => m.id === configuredModel)) {
-            models.unshift({
-              id: configuredModel,
-              label: configuredModel,
-              state: "available",
-              features: ["tools"],
-              evidence: {
-                kind: "host-config",
-                locator: configPath,
-              },
-            });
-          }
-        } catch {
-          // Ignore read error and return default models
+    if (configPath && fs.existsSync(configPath)) {
+      try {
+        const content = fs.readFileSync(configPath, "utf-8");
+        const configuredModel = this.extractTomlString(content, "model");
+        if (configuredModel) {
+          models.push({
+            id: configuredModel,
+            label: configuredModel,
+            state: "available",
+            features: ["tools", "reasoning"],
+            evidence: {
+              kind: "host-config",
+              locator: configPath,
+            },
+          });
         }
+
+        // Also check if any agent configurations exist
+        const agentsDir = path.join(path.dirname(configPath), "agents");
+        if (fs.existsSync(agentsDir)) {
+          const files = fs.readdirSync(agentsDir);
+          for (const file of files) {
+            if (file.endsWith(".toml")) {
+              const agentContent = fs.readFileSync(path.join(agentsDir, file), "utf-8");
+              const agentModel = this.extractTomlString(agentContent, "model");
+              if (agentModel && !models.some((m) => m.id === agentModel)) {
+                models.push({
+                  id: agentModel,
+                  label: agentModel,
+                  state: "available",
+                  features: ["tools"],
+                  evidence: {
+                    kind: "host-config",
+                    locator: path.join(agentsDir, file),
+                  },
+                });
+              }
+            }
+          }
+        }
+      } catch {
+        // Skip
       }
     }
 
     return models;
   }
 
-  async inspectEffortValues(_workspaceRoot?: string): Promise<string[]> {
-    return [...this.effortValues];
+  async inspectEffortValues(workspaceRoot?: string): Promise<string[]> {
+    const configPath = this.resolveConfigPath(workspaceRoot);
+    if (configPath && fs.existsSync(configPath)) {
+      try {
+        const content = fs.readFileSync(configPath, "utf-8");
+        const customLevels = this.extractTomlArray(content, "supported_effort_values");
+        if (customLevels && customLevels.length > 0) {
+          return customLevels;
+        }
+        const configuredEffort = this.extractTomlString(content, "model_reasoning_effort");
+        if (configuredEffort) {
+          return ["low", "medium", configuredEffort].filter((v, i, a) => a.indexOf(v) === i);
+        }
+      } catch {
+        // Skip
+      }
+    }
+
+    // Conservative baseline when unconfigured: low, medium, high (NEVER max unless evidenced)
+    return ["low", "medium", "high"];
   }
 
   async renderConfiguration(
@@ -237,7 +237,7 @@ export class CodexAdapter implements HostAdapter {
       plan.execution?.model ||
       plan.controller?.model ||
       profile?.single_model?.model ||
-      "gpt-5.6-sol";
+      "default";
 
     const targetEffort =
       plan.execution?.effort ||
@@ -397,9 +397,35 @@ export class CodexAdapter implements HostAdapter {
     };
   }
 
+  private resolveConfigPath(workspaceRoot?: string): string | null {
+    if (workspaceRoot) {
+      const p = path.join(workspaceRoot, ".codex", "config.toml");
+      if (fs.existsSync(p)) return p;
+      return null;
+    }
+    const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+    const p = path.join(codexHome, "config.toml");
+    if (fs.existsSync(p)) return p;
+    return null;
+  }
+
   private extractTomlString(content: string, key: string): string | null {
     const match = content.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]+)"`, "m"));
     return match ? match[1] : null;
+  }
+
+  private extractTomlValue(content: string, key: string): string | null {
+    const match = content.match(new RegExp(`^\\s*${key}\\s*=\\s*([0-9a-zA-Z_.-]+)`, "m"));
+    return match ? match[1] : null;
+  }
+
+  private extractTomlArray(content: string, key: string): string[] | null {
+    const match = content.match(new RegExp(`^\\s*${key}\\s*=\\s*\\[([^\\]]+)\\]`, "m"));
+    if (!match) return null;
+    return match[1]
+      .split(",")
+      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+      .filter((s) => s.length > 0);
   }
 
   private updateTomlKeyValue(content: string, key: string, value: string): string {

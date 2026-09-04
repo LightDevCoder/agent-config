@@ -5,6 +5,7 @@ import { ConfigurationRenderResult } from "../adapters/contract.js";
 
 export interface StoredPreview {
   preview_id: string;
+  preview_hash: string;
   workspace: string;
   config: unknown;
   diff: string;
@@ -12,6 +13,7 @@ export interface StoredPreview {
   target_hashes: Record<string, string | null>;
   rendered: ConfigurationRenderResult;
   created_at: string;
+  expires_at?: string;
   applied: boolean;
 }
 
@@ -40,7 +42,7 @@ export class PreviewManager {
   }
 
   /**
-   * Creates and registers a new preview snapshot with target file hashes.
+   * Creates and registers a new preview snapshot with target file hashes and preview_hash.
    */
   async createPreview(
     workspace: string,
@@ -52,15 +54,26 @@ export class PreviewManager {
       targetHashes[target] = await this.hashFile(target);
     }
 
+    const previewHash = crypto
+      .createHash("sha256")
+      .update(renderResult.diff + JSON.stringify(renderResult.mutation_targets))
+      .digest("hex");
+
+    const createdAt = new Date();
+    // 15 minutes TTL
+    const expiresAt = new Date(createdAt.getTime() + 15 * 60 * 1000).toISOString();
+
     const preview: StoredPreview = {
       preview_id: renderResult.preview_id,
+      preview_hash: `sha256-${previewHash}`,
       workspace,
       config,
       diff: renderResult.diff,
       mutation_targets: renderResult.mutation_targets,
       target_hashes: targetHashes,
       rendered: renderResult,
-      created_at: new Date().toISOString(),
+      created_at: createdAt.toISOString(),
+      expires_at: expiresAt,
       applied: false,
     };
 
@@ -76,7 +89,7 @@ export class PreviewManager {
   }
 
   /**
-   * Validates that a preview exists, has not been applied, and targets have not drifted.
+   * Validates that a preview exists, has not expired, has not been applied, and targets have not drifted.
    */
   async validatePreview(
     previewId: string,
@@ -95,6 +108,17 @@ export class PreviewManager {
         valid: false,
         error: `Preview ID '${previewId}' has already been applied. Please generate a new preview.`,
       };
+    }
+
+    if (preview.expires_at) {
+      const now = new Date().getTime();
+      const expiry = new Date(preview.expires_at).getTime();
+      if (now > expiry) {
+        return {
+          valid: false,
+          error: `Preview ID '${previewId}' not found or has expired. Please generate a new preview.`,
+        };
+      }
     }
 
     if (workspace && preview.workspace !== workspace) {
