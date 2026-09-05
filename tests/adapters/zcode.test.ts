@@ -63,9 +63,19 @@ describe("ZCode Native Host Adapter (§2, §7, §10, §45)", () => {
 
     it("identifies host from installed desktop app or user .zcode directory when workspace is not specified", async () => {
       const adapter = new ZCodeAdapter();
-      // On macOS, /Applications/ZCode.app and ~/.zcode exist on host
-      const detected = await adapter.identifyHost();
-      expect(detected).toBe(true);
+      const userZCode = path.join(os.homedir(), ".zcode");
+      const existed = fs.existsSync(userZCode);
+      if (!existed) {
+        await fsp.mkdir(userZCode, { recursive: true });
+      }
+      try {
+        const detected = await adapter.identifyHost();
+        expect(detected).toBe(true);
+      } finally {
+        if (!existed && fs.existsSync(userZCode)) {
+          await fsp.rm(userZCode, { recursive: true, force: true });
+        }
+      }
     });
   });
 

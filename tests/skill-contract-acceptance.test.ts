@@ -28,10 +28,14 @@ const validateProfile = ajv.compile(profileSchema);
 const validateHostCapabilities = ajv.compile(hostCapabilitiesSchema);
 const validateExecutionConfigJson = ajv.compile(executionConfigSchema);
 
-const skillsFixturesDir = path.resolve(
-  __dirname,
-  "../../skills/skills/agent-config/tests/fixtures"
-);
+const candidatesFixturesDir = [
+  process.env.SKILLS_FIXTURES_PATH,
+  path.resolve(__dirname, "../../skills/skills/agent-config/tests/fixtures"),
+  path.resolve(__dirname, "fixtures/skills"),
+];
+const skillsFixturesDir =
+  candidatesFixturesDir.find((p) => Boolean(p && fs.existsSync(p))) ||
+  path.resolve(__dirname, "fixtures/skills");
 
 function loadSkillFixture(filename: string): any {
   const filePath = path.join(skillsFixturesDir, filename);
