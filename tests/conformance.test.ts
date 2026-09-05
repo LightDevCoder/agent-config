@@ -1,22 +1,58 @@
-import { describe } from "vitest";
+import { describe, it, expect } from "vitest";
 import { runAdapterConformanceSuite } from "./conformance/adapter-conformance.suite.js";
 import { GenericAdapter } from "../src/adapters/generic/index.js";
 import { CodexAdapter } from "../src/adapters/codex/index.js";
 import { OpenCodeAdapter } from "../src/adapters/opencode/index.js";
 import { ClaudeCodeAdapter } from "../src/adapters/claude-code/index.js";
-import { CopilotCliAdapter } from "../src/adapters/copilot-cli/index.js";
 import { GeminiCliAdapter } from "../src/adapters/gemini-cli/index.js";
 import { CursorAdapter } from "../src/adapters/cursor/index.js";
-import { KiroAdapter } from "../src/adapters/kiro/index.js";
-import { ZedAdapter } from "../src/adapters/zed/index.js";
-import { GrokBuildAdapter } from "../src/adapters/grok-build/index.js";
 import { DshAdapter } from "../src/adapters/dsh/index.js";
-import { AmpAdapter } from "../src/adapters/amp/index.js";
-import { WindsurfAdapter } from "../src/adapters/windsurf/index.js";
-import { ClineAdapter } from "../src/adapters/cline/index.js";
-import { RooCodeAdapter } from "../src/adapters/roo-code/index.js";
+import { GrokBuildAdapter } from "../src/adapters/grok-build/index.js";
+import { ZCodeAdapter } from "../src/adapters/zcode/index.js";
+import { HermesAdapter } from "../src/adapters/hermes/index.js";
+import { AdapterRegistry } from "../src/adapters/registry.js";
 
 describe("Shared Adapter Contract Conformance Verification (§81)", () => {
+  describe("Exact Native Adapter Count & Pi Exclusion (§2, §3, §70)", () => {
+    it("asserts exact native adapter count = 9, generic fallback = 1, and Pi is NOT present in native adapters", () => {
+      const registry = new AdapterRegistry();
+      const allAdapters = registry.listAdapters();
+      const nativeAdapters = allAdapters.filter((a) => a.id !== "generic");
+
+      expect(nativeAdapters.length).toBe(9);
+      expect(allAdapters.length).toBe(10);
+
+      const nativeIds = nativeAdapters.map((a) => a.id).sort();
+      const expectedNativeIds = [
+        "antigravity", // gemini-cli family
+        "claude-code",
+        "codex",
+        "cursor",
+        "dsh",
+        "gemini-cli",
+        "grok-build",
+        "hermes",
+        "opencode",
+        "zcode",
+      ];
+      // Note: gemini-cli is the canonical adapter ID for antigravity/gemini family in registry
+      expect(nativeIds).toEqual([
+        "claude-code",
+        "codex",
+        "cursor",
+        "dsh",
+        "gemini-cli",
+        "grok-build",
+        "hermes",
+        "opencode",
+        "zcode",
+      ]);
+
+      // Assert Pi is NOT in registry
+      expect(allAdapters.map((a) => a.id)).not.toContain("pi");
+    });
+  });
+
   // Generic / Fallback Adapter
   runAdapterConformanceSuite(() => new GenericAdapter(), {
     adapterName: "GenericAdapter",
@@ -52,16 +88,6 @@ describe("Shared Adapter Contract Conformance Verification (§81)", () => {
     },
   });
 
-  // GitHub Copilot CLI Adapter
-  runAdapterConformanceSuite(() => new CopilotCliAdapter(), {
-    adapterName: "CopilotCliAdapter",
-    sampleExecutionConfig: {
-      execution_id: "copilot-cli-conformance-plan",
-      controller: { model: "gpt-4o" },
-      execution: { model: "gpt-4o" },
-    },
-  });
-
   // Gemini CLI Adapter
   runAdapterConformanceSuite(() => new GeminiCliAdapter(), {
     adapterName: "GeminiCliAdapter",
@@ -77,26 +103,6 @@ describe("Shared Adapter Contract Conformance Verification (§81)", () => {
     adapterName: "CursorAdapter",
     sampleExecutionConfig: {
       execution_id: "cursor-conformance-plan",
-      controller: { model: "claude-3-7-sonnet" },
-      execution: { model: "claude-3-7-sonnet" },
-    },
-  });
-
-  // Kiro Adapter
-  runAdapterConformanceSuite(() => new KiroAdapter(), {
-    adapterName: "KiroAdapter",
-    sampleExecutionConfig: {
-      execution_id: "kiro-conformance-plan",
-      controller: { model: "claude-3-7-sonnet" },
-      execution: { model: "claude-3-7-sonnet" },
-    },
-  });
-
-  // Zed Adapter
-  runAdapterConformanceSuite(() => new ZedAdapter(), {
-    adapterName: "ZedAdapter",
-    sampleExecutionConfig: {
-      execution_id: "zed-conformance-plan",
       controller: { model: "claude-3-7-sonnet" },
       execution: { model: "claude-3-7-sonnet" },
     },
@@ -122,43 +128,23 @@ describe("Shared Adapter Contract Conformance Verification (§81)", () => {
     },
   });
 
-  // Amp Adapter (P1)
-  runAdapterConformanceSuite(() => new AmpAdapter(), {
-    adapterName: "AmpAdapter",
+  // ZCode Adapter
+  runAdapterConformanceSuite(() => new ZCodeAdapter(), {
+    adapterName: "ZCodeAdapter",
     sampleExecutionConfig: {
-      execution_id: "amp-conformance-plan",
-      controller: { model: "claude-3-7-sonnet" },
-      execution: { model: "claude-3-7-sonnet" },
+      execution_id: "zcode-conformance-plan",
+      controller: { model: "zcode-default" },
+      execution: { model: "zcode-default" },
     },
   });
 
-  // Windsurf Adapter (P1)
-  runAdapterConformanceSuite(() => new WindsurfAdapter(), {
-    adapterName: "WindsurfAdapter",
+  // Hermes Adapter
+  runAdapterConformanceSuite(() => new HermesAdapter(), {
+    adapterName: "HermesAdapter",
     sampleExecutionConfig: {
-      execution_id: "windsurf-conformance-plan",
-      controller: { model: "claude-3-7-sonnet" },
-      execution: { model: "claude-3-7-sonnet" },
-    },
-  });
-
-  // Cline Adapter (P1)
-  runAdapterConformanceSuite(() => new ClineAdapter(), {
-    adapterName: "ClineAdapter",
-    sampleExecutionConfig: {
-      execution_id: "cline-conformance-plan",
-      controller: { model: "claude-3-7-sonnet" },
-      execution: { model: "claude-3-7-sonnet" },
-    },
-  });
-
-  // Roo Code Adapter (P1)
-  runAdapterConformanceSuite(() => new RooCodeAdapter(), {
-    adapterName: "RooCodeAdapter",
-    sampleExecutionConfig: {
-      execution_id: "roo-code-conformance-plan",
-      controller: { model: "claude-3-7-sonnet" },
-      execution: { model: "claude-3-7-sonnet" },
+      execution_id: "hermes-conformance-plan",
+      controller: { model: "hermes-default" },
+      execution: { model: "hermes-default" },
     },
   });
 });

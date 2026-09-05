@@ -21,12 +21,11 @@ export const REQUIRED_HARNESSES = [
   "claude-code",
   "opencode",
   "gemini-cli",
-  "copilot-cli",
   "cursor",
-  "kiro",
-  "zed",
   "dsh",
   "grok-build",
+  "zcode",
+  "hermes",
 ] as const;
 
 export const REQUIRED_SCENARIOS = [
@@ -374,93 +373,6 @@ export const FIXTURES_DEFINITIONS: Record<string, Record<string, FixtureFile[]>>
     ],
   },
 
-  "copilot-cli": {
-    minimal: [{ relativePath: ".copilot/config.json", content: "{}\n" }],
-    "single-model": [
-      {
-        relativePath: ".copilot/config.json",
-        content: JSON.stringify({ model: "gpt-4o" }, null, 2),
-      },
-    ],
-    "multi-model": [
-      {
-        relativePath: ".copilot/config.json",
-        content: JSON.stringify(
-          {
-            model: "gpt-4o",
-            custom_agents: [{ name: "worker", model: "claude-3.5-sonnet" }],
-            available_models: ["gpt-4o", "claude-3.5-sonnet"],
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "mcp-configured": [
-      {
-        relativePath: ".copilot/config.json",
-        content: JSON.stringify(
-          {
-            model: "gpt-4o",
-            mcp_servers: {
-              "agent-config": {
-                command: "agent-config",
-                args: ["serve"],
-              },
-            },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "mcp-absent": [
-      {
-        relativePath: ".copilot/config.json",
-        content: JSON.stringify(
-          {
-            model: "gpt-4o",
-            mcp_servers: {},
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "unknown-capability": [
-      {
-        relativePath: ".copilot/config.json",
-        content: JSON.stringify({ model: "gpt-4o" }, null, 2),
-      },
-    ],
-    malformed: [
-      {
-        relativePath: ".copilot/config.json",
-        content: '{"model": "gpt-4o", syntax error',
-      },
-    ],
-    "stale-profile": [
-      {
-        relativePath: ".copilot/config.json",
-        content: JSON.stringify({ model: "gpt-4o" }, null, 2),
-      },
-      {
-        relativePath: ".agent-profile.json",
-        content: JSON.stringify(
-          {
-            schema_version: "1.0",
-            host_id: "copilot-cli",
-            fingerprint: "stale-fp-005",
-            generated_at: "2024-01-01T00:00:00.000Z",
-            single_model: { model: "copilot-model-v0" },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  },
-
   cursor: {
     minimal: [{ relativePath: ".cursor/settings.json", content: "{}\n" }],
     "single-model": [
@@ -539,218 +451,6 @@ export const FIXTURES_DEFINITIONS: Record<string, Record<string, FixtureFile[]>>
             fingerprint: "stale-fp-006",
             generated_at: "2024-01-01T00:00:00.000Z",
             single_model: { model: "claude-2.0-old" },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  },
-
-  kiro: {
-    minimal: [{ relativePath: ".kiro/config.json", content: "{}\n" }],
-    "single-model": [
-      {
-        relativePath: ".kiro/config.json",
-        content: JSON.stringify({ model: "claude-3-7-sonnet" }, null, 2),
-      },
-    ],
-    "multi-model": [
-      {
-        relativePath: ".kiro/config.json",
-        content: JSON.stringify(
-          {
-            model: "claude-3-7-sonnet",
-            agents: { worker: { model: "claude-3-5-haiku" } },
-            supported_models: ["claude-3-7-sonnet", "claude-3-5-haiku"],
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "mcp-configured": [
-      {
-        relativePath: ".kiro/config.json",
-        content: JSON.stringify(
-          {
-            model: "claude-3-7-sonnet",
-            mcpServers: {
-              "agent-config": {
-                command: "agent-config",
-                args: ["serve"],
-              },
-            },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "mcp-absent": [
-      {
-        relativePath: ".kiro/config.json",
-        content: JSON.stringify(
-          {
-            model: "claude-3-7-sonnet",
-            mcpServers: {},
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "unknown-capability": [
-      {
-        relativePath: ".kiro/config.json",
-        content: JSON.stringify({ model: "claude-3-7-sonnet" }, null, 2),
-      },
-    ],
-    malformed: [
-      {
-        relativePath: ".kiro/config.json",
-        content: '{"model": "claude-3-7-sonnet", broken: ',
-      },
-    ],
-    "stale-profile": [
-      {
-        relativePath: ".kiro/config.json",
-        content: JSON.stringify({ model: "claude-3-7-sonnet" }, null, 2),
-      },
-      {
-        relativePath: ".agent-profile.json",
-        content: JSON.stringify(
-          {
-            schema_version: "1.0",
-            host_id: "kiro",
-            fingerprint: "stale-fp-007",
-            generated_at: "2024-01-01T00:00:00.000Z",
-            single_model: { model: "kiro-legacy-agent" },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  },
-
-  zed: {
-    minimal: [{ relativePath: ".zed/settings.json", content: "{}\n" }],
-    "single-model": [
-      {
-        relativePath: ".zed/settings.json",
-        content: JSON.stringify(
-          {
-            assistant: {
-              default_model: {
-                provider: "zed.dev",
-                model: "claude-3-7-sonnet",
-              },
-            },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "multi-model": [
-      {
-        relativePath: ".zed/settings.json",
-        content: JSON.stringify(
-          {
-            assistant: {
-              default_model: {
-                provider: "zed.dev",
-                model: "claude-3-7-sonnet",
-              },
-              profiles: {
-                worker: { model: "claude-3-5-haiku" },
-              },
-            },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "mcp-configured": [
-      {
-        relativePath: ".zed/settings.json",
-        content: JSON.stringify(
-          {
-            assistant: {
-              default_model: {
-                provider: "zed.dev",
-                model: "claude-3-7-sonnet",
-              },
-            },
-            context_servers: {
-              "agent-config": {
-                command: "agent-config",
-                args: ["serve"],
-              },
-            },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "mcp-absent": [
-      {
-        relativePath: ".zed/settings.json",
-        content: JSON.stringify(
-          {
-            assistant: {
-              default_model: {
-                provider: "zed.dev",
-                model: "claude-3-7-sonnet",
-              },
-            },
-            context_servers: {},
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    "unknown-capability": [
-      {
-        relativePath: ".zed/settings.json",
-        content: JSON.stringify({ theme: "One Dark" }, null, 2),
-      },
-    ],
-    malformed: [
-      {
-        relativePath: ".zed/settings.json",
-        content: '{"assistant": { broken json',
-      },
-    ],
-    "stale-profile": [
-      {
-        relativePath: ".zed/settings.json",
-        content: JSON.stringify(
-          {
-            assistant: {
-              default_model: {
-                provider: "zed.dev",
-                model: "claude-3-7-sonnet",
-              },
-            },
-          },
-          null,
-          2
-        ),
-      },
-      {
-        relativePath: ".agent-profile.json",
-        content: JSON.stringify(
-          {
-            schema_version: "1.0",
-            host_id: "zed",
-            fingerprint: "stale-fp-008",
-            generated_at: "2024-01-01T00:00:00.000Z",
-            single_model: { model: "zed-ancient-model" },
           },
           null,
           2
@@ -928,6 +628,217 @@ export const FIXTURES_DEFINITIONS: Record<string, Record<string, FixtureFile[]>>
             fingerprint: "stale-fp-010",
             generated_at: "2024-01-01T00:00:00.000Z",
             single_model: { model: "grok-v0-vintage" },
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  },
+
+  zcode: {
+    minimal: [
+      {
+        relativePath: ".zcode/config.json",
+        content: JSON.stringify({ version: "0.16.5" }, null, 2),
+      },
+    ],
+    "single-model": [
+      {
+        relativePath: ".zcode/config.json",
+        content: JSON.stringify(
+          {
+            model: "builtin:bigmodel/GLM-5.3",
+            provider: {
+              "builtin:bigmodel": {
+                models: {
+                  "GLM-5.3": {
+                    reasoning: { variants: ["low", "max", "high"] },
+                  },
+                },
+              },
+            },
+          },
+          null,
+          2
+        ),
+      },
+    ],
+    "multi-model": [
+      {
+        relativePath: ".zcode/config.json",
+        content: JSON.stringify(
+          {
+            model: "builtin:bigmodel/GLM-5.3",
+            provider: {
+              "builtin:bigmodel": {
+                models: {
+                  "GLM-5.3": { reasoning: { variants: ["low", "max", "high"] } },
+                  "GLM-5.3-Flash": { reasoning: { variants: ["low", "high"] } },
+                  "GLM-5-Turbo": {},
+                },
+              },
+            },
+          },
+          null,
+          2
+        ),
+      },
+    ],
+    "mcp-configured": [
+      {
+        relativePath: ".zcode/config.json",
+        content: JSON.stringify(
+          {
+            model: "builtin:bigmodel/GLM-5.3",
+            mcp: {
+              servers: {
+                "agent-config": {
+                  type: "stdio",
+                  command: "agent-config",
+                  args: ["serve"],
+                },
+              },
+            },
+          },
+          null,
+          2
+        ),
+      },
+    ],
+    "mcp-absent": [
+      {
+        relativePath: ".zcode/config.json",
+        content: JSON.stringify(
+          {
+            model: "builtin:bigmodel/GLM-5.3",
+            mcp: { servers: {} },
+          },
+          null,
+          2
+        ),
+      },
+    ],
+    "unknown-capability": [
+      {
+        relativePath: ".zcode/config.json",
+        content: JSON.stringify({ theme: "dark" }, null, 2),
+      },
+    ],
+    malformed: [
+      {
+        relativePath: ".zcode/config.json",
+        content: "{ invalid json content == not json }",
+      },
+    ],
+    "stale-profile": [
+      {
+        relativePath: ".zcode/config.json",
+        content: JSON.stringify({ model: "builtin:bigmodel/GLM-5.3" }, null, 2),
+      },
+      {
+        relativePath: ".agent-profile.json",
+        content: JSON.stringify(
+          {
+            schema_version: "1.0",
+            host_id: "zcode",
+            fingerprint: "stale-fp-011",
+            generated_at: "2024-01-01T00:00:00.000Z",
+            single_model: { model: "zcode-nonexistent-model" },
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  },
+
+  hermes: {
+    minimal: [
+      {
+        relativePath: ".hermes/config.yaml",
+        content: "model:\n  default: hermes-default\n",
+      },
+    ],
+    "single-model": [
+      {
+        relativePath: ".hermes/config.yaml",
+        content: "model:\n  default: gemini-3.8-flash-high\n",
+      },
+    ],
+    "multi-model": [
+      {
+        relativePath: ".hermes/config.yaml",
+        content: `model:
+  default: gemini-3.8-flash-high
+  aliases:
+    local: omlx/Qwen3.8-9B-mlx-4Bit
+providers:
+  omlx:
+    models:
+      - Qwen3.8-9B-mlx-4Bit
+custom_providers:
+  - name: cpa-gui
+    models:
+      claude-sonnet-4-6: {}
+      gpt-5.5: {}
+delegation:
+  model: omlx/Qwen3.8-9B-mlx-4Bit
+  max_concurrent_children: 4
+moa:
+  reference_models:
+    - model: deepseek/deepseek-v4-pro
+`,
+      },
+    ],
+    "mcp-configured": [
+      {
+        relativePath: ".hermes/config.yaml",
+        content: `model:
+  default: gemini-3.8-flash-high
+mcp_servers:
+  agent-config:
+    command: agent-config
+    args:
+      - serve
+`,
+      },
+    ],
+    "mcp-absent": [
+      {
+        relativePath: ".hermes/config.yaml",
+        content: `model:
+  default: gemini-3.8-flash-high
+mcp_servers: {}
+`,
+      },
+    ],
+    "unknown-capability": [
+      {
+        relativePath: ".hermes/config.yaml",
+        content: "custom_flag: true\n",
+      },
+    ],
+    malformed: [
+      {
+        relativePath: ".hermes/config.yaml",
+        content: `model: [unclosed yaml list\n  bad: {indent`,
+      },
+    ],
+    "stale-profile": [
+      {
+        relativePath: ".hermes/config.yaml",
+        content: "model:\n  default: gemini-3.8-flash-high\n",
+      },
+      {
+        relativePath: ".agent-profile.json",
+        content: JSON.stringify(
+          {
+            schema_version: "1.0",
+            host_id: "hermes",
+            fingerprint: "stale-fp-012",
+            generated_at: "2024-01-01T00:00:00.000Z",
+            single_model: { model: "hermes-nonexistent-model" },
           },
           null,
           2

@@ -12,11 +12,11 @@ import { createIsolatedEnv, copyFixture } from "./harness/isolated-env.js";
 describe("Adapter Fixture Scaffold & Scenarios (§80)", () => {
   const fixturesDir = path.resolve(__dirname, "fixtures");
 
-  it("materializes and maintains all 10 required harnesses and 8 scenarios", () => {
+  it("materializes and maintains all required harnesses and 8 scenarios", () => {
     // Ensure fixtures are materialized
     materializeFixtures(fixturesDir);
 
-    expect(REQUIRED_HARNESSES).toHaveLength(10);
+    expect(REQUIRED_HARNESSES).toHaveLength(9);
     expect(REQUIRED_SCENARIOS).toHaveLength(8);
 
     for (const harness of REQUIRED_HARNESSES) {

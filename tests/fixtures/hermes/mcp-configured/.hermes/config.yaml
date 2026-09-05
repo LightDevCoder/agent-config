@@ -1,0 +1,7 @@
+model:
+  default: gemini-3.8-flash-high
+mcp_servers:
+  agent-config:
+    command: agent-config
+    args:
+      - serve

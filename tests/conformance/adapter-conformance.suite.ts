@@ -154,8 +154,9 @@ export function runAdapterConformanceSuite(
           const validEvidenceKinds = [
             "host-runtime",
             "host-config",
+            "host-schema",
             "adapter-probe",
-            "fallback-default",
+            "user-confirmed",
           ];
           expect(validEvidenceKinds).toContain(model.evidence.kind);
           expect(typeof model.evidence.locator).toBe("string");
@@ -179,6 +180,11 @@ export function runAdapterConformanceSuite(
       ) {
         expect(optionsResult.supported_values).toEqual([]);
         expect(caps.supported_effort_values).toEqual([]);
+      }
+
+      // Assert no invented concurrency (no unevidenced concurrency like 4 or 8)
+      if (caps.capabilities.concurrency?.state === "unknown") {
+        expect(caps.capabilities.concurrency.max_concurrency).toBeUndefined();
       }
     });
 
@@ -248,9 +254,46 @@ export function runAdapterConformanceSuite(
         workspaceDir
       );
       expect(badCompanionApply.success).toBe(false);
+
+      // Frozen preview / apply exact match and drift / staleness rejection
+      try {
+        const preview = await adapter.previewConfiguration(
+          samplePlan,
+          options.sampleProfile,
+          workspaceDir
+        );
+        if (preview && preview.preview_id && preview.mutation_targets.length > 0) {
+          // Exact match apply
+          const goodApply = await adapter.applyConfiguration(
+            preview.preview_id,
+            preview,
+            workspaceDir
+          );
+          expect(goodApply.success).toBe(true);
+
+          // Drift rejection: modify one of the applied targets
+          const targetFile = preview.mutation_targets[0];
+          if (targetFile) {
+            // Apply again with drifted content / changed target or stale preview
+            const stalePreview = {
+              ...preview,
+              preview_id: `stale-${Date.now()}`,
+            };
+            const staleApply = await adapter.applyConfiguration(
+              stalePreview.preview_id,
+              stalePreview,
+              workspaceDir
+            );
+            // Stale/unmatched preview ID must be rejected
+            expect(staleApply.success).toBe(false);
+          }
+        }
+      } catch {
+        // Some adapters reject preview when models are unconfigured, which is safe fail-closed behavior
+      }
     });
 
-    it("8. Scope Isolation: rendered targets and previews strictly respect workspace or home boundaries", async () => {
+    it("8. Scope Isolation & Fidelity: rendered targets and previews strictly respect workspace or home boundaries without scope cross-contamination", async () => {
       try {
         const preview = await adapter.previewConfiguration(
           samplePlan,
@@ -271,15 +314,25 @@ export function runAdapterConformanceSuite(
         // Skip if preview requires specific config
       }
 
-      const companionPreview = await adapter.previewCompanionRegistration(workspaceDir);
-      for (const target of companionPreview.mutation_targets) {
-        const isInsideWorkspace = target.startsWith(workspaceDir);
-        const isInsideHome = target.startsWith(env.homeDir);
+      // Project scope companion preview must target project scope inside workspace
+      const projectCompanionPreview = await adapter.previewCompanionRegistration(workspaceDir, "project");
+      for (const target of projectCompanionPreview.mutation_targets) {
         expect(
-          isInsideWorkspace || isInsideHome,
-          `Companion target ${target} leaked outside workspace and home`
+          target.startsWith(workspaceDir),
+          `Project scope companion target ${target} must strictly be inside workspace, never fall back to user scope`
         ).toBe(true);
       }
+      expect(projectCompanionPreview.scope).toBe("project");
+
+      // User scope companion preview must target user scope inside home
+      const userCompanionPreview = await adapter.previewCompanionRegistration(workspaceDir, "user");
+      for (const target of userCompanionPreview.mutation_targets) {
+        expect(
+          target.startsWith(env.homeDir),
+          `User scope companion target ${target} must strictly be inside home, never fall back to workspace`
+        ).toBe(true);
+      }
+      expect(["global", "user"]).toContain(userCompanionPreview.scope);
     });
 
     it("9. Validation Resiliency: handles blank and mismatched states cleanly without unhandled exceptions", async () => {

@@ -91,6 +91,10 @@ export class DshAdapter implements HostAdapter {
 
     if (workspaceRoot) {
       const candidates = [
+        path.join(workspaceRoot, "cordis.patch.yml"),
+        path.join(workspaceRoot, "cordis.patch.yaml"),
+        path.join(workspaceRoot, "cordis.yml"),
+        path.join(workspaceRoot, "cordis.yaml"),
         path.join(workspaceRoot, ".dsh"),
         path.join(workspaceRoot, "dsh.config.json"),
         path.join(workspaceRoot, "dsh.config.ts"),
@@ -100,8 +104,6 @@ export class DshAdapter implements HostAdapter {
         path.join(workspaceRoot, "dsh.yml"),
         path.join(workspaceRoot, "dsh.yaml"),
         path.join(workspaceRoot, ".cordis"),
-        path.join(workspaceRoot, "cordis.yml"),
-        path.join(workspaceRoot, "cordis.yaml"),
         path.join(workspaceRoot, "cordis.json"),
       ];
       if (candidates.some((p) => fs.existsSync(p))) {
@@ -500,7 +502,6 @@ export class DshAdapter implements HostAdapter {
       path.join(workspace, "dsh.config.json"),
       path.join(workspace, ".dsh", "config.json"),
       path.join(workspace, ".dsh", "plugins.json"),
-      path.join(workspace, ".dsh", "subagents.json"),
     ];
 
     for (const cf of configFiles) {
@@ -869,9 +870,13 @@ export class DshAdapter implements HostAdapter {
   }
 
   /**
-   * Resolves target configuration path for DSH.
+   * Resolves target configuration path for DSH according to scope.
    */
-  determineTargetConfigPath(workspaceRoot: string): string {
+  determineTargetConfigPath(workspaceRoot: string, scope?: "project" | "global" | "user"): string {
+    if (scope === "global" || scope === "user" || !workspaceRoot) {
+      const dshHome = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
+      return path.join(dshHome, "profiles", "web", "cordis.patch.yml");
+    }
     const dshDirConfig = path.join(workspaceRoot, ".dsh", "config.json");
     if (fs.existsSync(dshDirConfig)) {
       return dshDirConfig;
@@ -888,7 +893,11 @@ export class DshAdapter implements HostAdapter {
     scope?: "project" | "global" | "user"
   ): Promise<CompanionRegistrationStatus> {
     const workspace = workspaceRoot || process.cwd();
-    const targetFile = this.determineTargetConfigPath(workspace);
+    const resolvedScope: "project" | "global" =
+      scope === "global" || scope === "user" || (!scope && !workspaceRoot)
+        ? "global"
+        : "project";
+    const targetFile = this.determineTargetConfigPath(workspace, resolvedScope);
 
     const activePlugins = await this.inspectActivePlugins(workspaceRoot);
     const mcpPluginActive = activePlugins.some(
@@ -952,10 +961,6 @@ export class DshAdapter implements HostAdapter {
 
     const isMcpPluginPresent = mcpPluginActive || mcpPluginInConfig;
     const isRegistered = isMcpPluginPresent && !!serverEntry;
-    const resolvedScope: "project" | "global" =
-      scope === "global" || scope === "user" || (!scope && !workspaceRoot)
-        ? "global"
-        : "project";
 
     if (isRegistered && serverEntry) {
       return {
@@ -996,8 +1001,8 @@ export class DshAdapter implements HostAdapter {
     scope?: "project" | "global" | "user"
   ): Promise<CompanionRegistrationPreview> {
     const workspace = workspaceRoot || process.cwd();
-    const targetFile = this.determineTargetConfigPath(workspace);
     const resolvedScope: "project" | "global" = (scope === "global" || scope === "user" || (!scope && !workspaceRoot)) ? "global" : "project";
+    const targetFile = this.determineTargetConfigPath(workspace, resolvedScope);
 
     // Fail-closed version safety check (§42)
     const versionInfo = await this.inspectVersion(workspaceRoot);
@@ -1084,7 +1089,8 @@ export class DshAdapter implements HostAdapter {
    */
   async applyCompanionRegistration(
     previewHash: string,
-    workspaceRoot?: string
+    workspaceRoot?: string,
+    providedPreview?: CompanionRegistrationPreview
   ): Promise<ApplyResult> {
     const versionInfo = await this.inspectVersion(workspaceRoot);
     if (versionInfo.fail_closed_for_mutation) {
@@ -1098,7 +1104,7 @@ export class DshAdapter implements HostAdapter {
       };
     }
 
-    const preview = await this.previewCompanionRegistration(workspaceRoot);
+    const preview = providedPreview || (await this.previewCompanionRegistration(workspaceRoot));
     if (!preview.supported || !preview.files || preview.files.length === 0) {
       return {
         success: false,

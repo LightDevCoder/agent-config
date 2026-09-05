@@ -682,9 +682,10 @@ export class CodexAdapter implements HostAdapter {
 
   async applyCompanionRegistration(
     previewHash: string,
-    workspaceRoot?: string
+    workspaceRoot?: string,
+    providedPreview?: CompanionRegistrationPreview
   ): Promise<ApplyResult> {
-    const preview = await this.previewCompanionRegistration(workspaceRoot);
+    const preview = providedPreview || (await this.previewCompanionRegistration(workspaceRoot));
     if (!preview.supported || !preview.files || preview.files.length === 0) {
       return {
         success: false,
@@ -767,16 +768,7 @@ export class CodexAdapter implements HostAdapter {
         if (match) resolvedValue = match;
       }
     } else {
-      const standardEfforts = ["none", "low", "medium", "high", "xhigh"];
-      if (normalized === "highest-supported") {
-        resolvedValue = "high";
-      } else if (normalized === "lowest-sufficient" || normalized === "lowest-supported") {
-        resolvedValue = "low";
-      } else if (normalized === "configured") {
-        resolvedValue = "medium";
-      } else if (standardEfforts.includes(normalized)) {
-        resolvedValue = normalized;
-      }
+      return undefined;
     }
 
     if (!resolvedValue) {

@@ -420,5 +420,19 @@ describe("DeepSeek Harness (DSH) Native Adapter Tests (§39, §40, §41, §42, �
       expect(resolved?.host_field).toBe("reasoning_effort");
       expect(resolved?.host_value).toBe("high");
     });
+
+    it("respects Cordis patch markers and scope targeting", async () => {
+      const adapter = new DshAdapter();
+      const cordisPatch = path.join(workspaceDir, "cordis.patch.yml");
+      await fsp.writeFile(cordisPatch, "# Cordis patch overlay\n", "utf-8");
+
+      expect(await adapter.identifyHost(workspaceDir)).toBe(true);
+
+      const targetProject = adapter.determineTargetConfigPath(workspaceDir, "project");
+      expect(targetProject).toBe(path.join(workspaceDir, "dsh.config.json"));
+
+      const targetUser = adapter.determineTargetConfigPath(workspaceDir, "user");
+      expect(targetUser).toContain("cordis.patch.yml");
+    });
   });
 });

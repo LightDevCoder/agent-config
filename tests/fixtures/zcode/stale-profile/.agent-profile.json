@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "host_id": "zcode",
+  "fingerprint": "stale-fp-011",
+  "generated_at": "2024-01-01T00:00:00.000Z",
+  "single_model": {
+    "model": "zcode-nonexistent-model"
+  }
+}

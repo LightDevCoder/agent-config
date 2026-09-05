@@ -1,101 +1,143 @@
-# Codex Adapter Evidence Record (§24)
+# Codex Adapter Evidence Record
 
-## Harness Identity
-- **Harness ID**: `codex`
-- **Adapter ID**: `codex`
-- **Name**: Codex Adapter
-- **Runtime Process / Indicators**:
-  - `process.env.CODEX_THREAD_ID`
-  - `process.env.CODEX_SESSION_ID`
-  - `process.env.CODEX_WORKSPACE`
-  - `process.env.CODEX_HOME`
-  - Executable name or title containing `codex`
+## Adapter ID
+- **Adapter ID:** `codex`
 
-## Supported Versions (§21, §22)
-- **Supported**: `0.x`, `1.x`
-- **Partially Supported**: `2.x`
-- **Fail-Closed for Mutation**: Unknown versions or `incompatible` versions allow read-only inspection but fail-closed for configuration mutation.
+## Product / Harness Identity
+- **Product Name:** Codex / OpenAI Codex CLI
+- **Harness ID:** `codex`
+- **Binary / Executable Names:** `codex` (CLI bundled with OpenAI ChatGPT desktop / plugins, e.g. `/Applications/ChatGPT.app/Contents/Resources/codex` or `~/.codex/plugins/.plugin-appserver/codex` or PATH `codex`)
+- **Runtime Environment Markers:**
+  - `CODEX_THREAD_ID`
+  - `CODEX_SESSION_ID`
+  - `CODEX_WORKSPACE`
+  - `CODEX_HOME`
+  - Active process title or binary basename matching `codex`
 
-## Evidence Sources
-1. **Runtime Context**: `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_WORKSPACE`, `CODEX_HOME`.
-2. **Project Workspace**:
-   - `<workspace>/.codex/config.toml` (or `<workspace>/codex.toml`)
-   - `<workspace>/.codex/agents/*.toml`
-   - `<workspace>/.codex/mcp.json`
-   - `<workspace>/.codex/sessions/`, `session.db`, `state.db`
-   - `<workspace>/.codex/version`
-3. **User / Global Configuration**:
-   - `$CODEX_HOME/config.toml` or `~/.codex/config.toml`
-   - `$CODEX_HOME/agents/*.toml` or `~/.codex/agents/*.toml`
-   - `$CODEX_HOME/mcp.json` or `~/.codex/mcp.json`
-   - `$CODEX_HOME/version` or `~/.codex/version`
+## Version Checked & Date Checked
+- **Version Checked:** `codex-cli 0.153.3` (installed on local host via `/Applications/ChatGPT.app/Contents/Resources/codex` and `~/.codex/plugins/.plugin-appserver/codex`)
+- **Date Checked:** 2026-09-05
 
-## Config Locations & Hierarchy
-- **Project Scope**: `<workspace>/.codex/config.toml` (preferred) or `<workspace>/codex.toml`.
-- **User / Global Scope**: `$CODEX_HOME/config.toml` or `~/.codex/config.toml`.
-- **Subagents Directory**: `<workspace>/.codex/agents/*.toml` (project) and `~/.codex/agents/*.toml` (user).
+## Official Upstream, Documentation, & Config Schema Sources
+- **Official Upstream:** OpenAI Codex (`codex-cli`)
+- **Official Documentation:** Built-in CLI help (`codex --help`, `codex exec --help`, `codex mcp --help`, `codex doctor --help`)
+- **Official Config/Schema Source:** TOML configuration schema read from `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`), per-agent TOML files under `.codex/agents/*.toml`, and `.codex/mcp.json` / `$CODEX_HOME/mcp.json`.
 
-## Config Precedence & Scope Isolation
-- Project configuration overrides user configuration for `model`, `model_reasoning_effort`, `max_concurrency`, and individual subagents.
-- Workspace inspection inspects the workspace project layer. Unconfigured workspaces do not inherit speculative models.
-- Mutation targets the selected scope (default: project `<workspace>/.codex/config.toml` and `<workspace>/.codex/agents/<ticket>.toml`).
+## Executable Detection & Version Detection
+- **Executable Detection:**
+  - Active process check: `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_WORKSPACE`, or process title/path.
+  - PATH lookup: `which codex` or known installation paths (`/Applications/ChatGPT.app/Contents/Resources/codex`, `~/.codex/plugins/.plugin-appserver/codex`).
+  - Workspace markers: presence of `.codex/` directory or `codex.toml`.
+  - User markers: presence of `$CODEX_HOME` or `~/.codex/`.
+- **Version Detection:**
+  - Environment variable `CODEX_VERSION`.
+  - CLI execution: `codex --version` or `codex -V` (emits e.g. `codex-cli 0.153.3`).
+  - File markers: `<workspace>/.codex/version` or `$CODEX_HOME/version`.
+- **Compatibility Classification:**
+  - `0.x`, `1.x`: `supported` (`fail_closed_for_mutation: false`)
+  - `2.x`: `partially-supported`
+  - Non-versioned or unevidenced: `unknown-version` (`fail_closed_for_mutation: true`)
+  - Explicit `"incompatible"`: `incompatible` (`fail_closed_for_mutation: true`)
 
-## MCP Mechanism
-- **Configuration Path**:
-  - Project Scope: `<workspace>/.codex/mcp.json`
-  - User Scope: `~/.codex/mcp.json` (or `$CODEX_HOME/mcp.json`)
-- **Format**:
-  ```json
-  {
-    "mcpServers": {
-      "agent-config": {
-        "command": "agent-config",
-        "args": ["serve"]
+## Config Files, Scopes, & Precedence
+- **Host Config Files:**
+  - User/Global Scope: `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`), `$CODEX_HOME/agents/*.toml`, `$CODEX_HOME/mcp.json`.
+  - Project Scope: `<workspace>/.codex/config.toml` (or `<workspace>/codex.toml`), `<workspace>/.codex/agents/*.toml`, `<workspace>/.codex/mcp.json`.
+- **Config Hierarchy & Precedence:**
+  - Project-level `<workspace>/.codex/config.toml` and `.codex/agents/*.toml` override user-level `$CODEX_HOME/config.toml`.
+  - Environment overrides (`-c key=value` flags or runtime variables) take precedence over static configuration files.
+  - Workspace inspection inspects the workspace layer first. Unconfigured workspaces do not fabricate models or reasoning effort.
+- **Scope Isolation:**
+  - Project preview and apply strictly target `<workspace>/.codex/`.
+  - User preview and apply strictly target `$CODEX_HOME/` (or `~/.codex/`).
+
+## Model-Selection Mechanism
+- **Host Mechanism:**
+  - Primary model configured via `model = "..."` key in `config.toml` or passed via CLI `--model <MODEL>` (`-m`).
+  - Multi-model inventory evidenced via `supported_models = [...]` in `config.toml`, `models_cache.json`, or per-agent `model` in `.codex/agents/*.toml`.
+- **Adapter Adaptation:**
+  - Returns only evidenced models; if no models are configured or detected, returns an empty list `[]` without guessing unevidenced OpenAI or external models.
+  - Model selection capability is reported as `available` when explicit models are found, and `unknown` when unconfigured.
+
+## Reasoning / Effort / Variant Mechanism
+- **Host Mechanism:**
+  - Controlled by `model_reasoning_effort = "..."` in `config.toml` or per-agent configuration.
+  - Evidenced discrete values: e.g. `"low"`, `"medium"`, `"high"`, `"xhigh"` (defined in `supported_effort_values` in `config.toml` or read from active configuration).
+- **Adapter Adaptation:**
+  - Native field: `model_reasoning_effort`.
+  - Honest reporting: if `model_reasoning_effort` and `supported_effort_values` are absent from host configuration, reasoning capability reports `state = "unknown"` and supported effort values return `[]`. Does not inject synthesized `["low", "medium", "high"]`.
+  - Policy mapping:
+    - `"highest-supported"`: resolves to `"xhigh"` or `"high"` if evidenced, or highest supported value.
+    - `"lowest-sufficient"` / `"lowest-supported"`: resolves to `"low"` or lowest supported value.
+    - `"configured"`: resolves to current configured value.
+
+## Agent / Subagent Mechanism, Workers, & Parallelism
+- **Host Mechanism:**
+  - Subagents/workers configured as TOML files under `.codex/agents/<agent_name>.toml` defining `name`, `model`, and optional `model_reasoning_effort`.
+  - Concurrency configured via `max_concurrency = N` in `config.toml` or `CODEX_MAX_CONCURRENCY` environment variable.
+- **Adapter Adaptation:**
+  - Subagents capability is `available` only when `.codex/agents/` exists or subagents are configured/enabled. Otherwise reports `unknown` and topology reports `supports_subagents: false`.
+  - Parallelism is `available` only when concurrency > 1 is evidenced. Otherwise reports `unknown` and topology reports `supports_parallel_execution: false`.
+  - Worker configurations render isolated per-ticket files under `.codex/agents/<ticket_id>.toml`.
+
+## MCP Support, Registration Mechanism, Scopes, & Doctor/Status
+- **Host Mechanism:**
+  - Native CLI command: `codex mcp add <NAME> -- <COMMAND>...` or `codex mcp list`, `codex mcp get <NAME>`, `codex mcp remove <NAME>`.
+  - File format: JSON with `mcpServers` object:
+    ```json
+    {
+      "mcpServers": {
+        "agent-config": {
+          "command": "agent-config",
+          "args": ["serve"]
+        }
       }
     }
-  }
-  ```
-- **Scope Handling**: Inspection checks project scope first; if not registered, checks user scope. Mutation targets the specified or workspace-appropriate scope.
+    ```
+  - Project Scope target: `<workspace>/.codex/mcp.json`.
+  - User/Global Scope target: `$CODEX_HOME/mcp.json` or `~/.codex/mcp.json`.
+  - Doctor command: `codex doctor` verifies local config, auth, and runtime health.
+- **Adapter Adaptation:**
+  - Previews generate unified diffs with cryptographic baseline hash and preview hash (`FrozenMutationPreview`).
+  - Scope is strictly preserved: project preview -> project apply; user preview -> user apply.
+  - Inspection checks project scope first; falls back to user scope if unconfigured.
+  - Doctor/validation validates JSON parsing, server command/args presence, and reachability.
 
-## Model Mechanism (§25)
-- **Primary Model**: `model` key in `config.toml`.
-- **Supported Models**: `supported_models` array in `config.toml`.
-- **Worker Models**: `worker_model` in `config.toml` or per-agent `model` in `.codex/agents/*.toml`.
-- **Real Inspection**: Returns only evidenced models; if no models are configured or detected, returns an empty list without guessing default OpenAI or Anthropic models.
+## Machine-Readable Inspection Surfaces
+- Config files: `.codex/config.toml`, `.codex/agents/*.toml`, `.codex/mcp.json`.
+- CLI commands: `codex --version`, `codex mcp list`, `codex doctor`.
+- State databases & caches: `models_cache.json`, `.codex-global-state.json`.
 
-## Reasoning Mechanism (§25)
-- **Native Field**: `model_reasoning_effort`.
-- **Supported Values**: Defined in `supported_effort_values` in `config.toml` or current configured `model_reasoning_effort`.
-- **Real Inspection**: If reasoning effort is absent from host configuration, reasoning capability reports `unknown` and supported effort values return `[]`.
-- **Policy Mapping**:
-  - `highest-supported`: maps to `xhigh` / `high` if evidenced, or highest supported value.
-  - `lowest-sufficient` / `lowest-supported`: maps to `low` or lowest supported value.
-  - `configured`: maps to current configured value.
+## Writable Configuration Targets & Protected Configuration
+- **Writable Targets:**
+  - Project Scope: `<workspace>/.codex/config.toml`, `<workspace>/.codex/agents/<ticket_id>.toml`, `<workspace>/.codex/mcp.json`.
+  - User Scope: `$CODEX_HOME/config.toml`, `$CODEX_HOME/mcp.json`.
+- **Protected / Managed Configuration:**
+  - Unrelated keys in `config.toml` (e.g. `marketplaces`, `plugins`, `notify`, `personality`, `service_tier`) are preserved untouched during mutation.
+  - Session databases (`*.sqlite`, `sessions/`) and auth credentials (`auth.json`) are strictly protected and never modified by adapter.
 
-## Subagent Mechanism (§25)
-- **Evidence Detection**: Subagent capability is `available` only when `.codex/agents` directory exists, or subagents are configured/enabled in `config.toml`, or `CODEX_SUBAGENTS` is active.
-- **Strict Unknown Semantics**: When unevidenced, subagent capability is reported as `unknown` and topology reports `supports_subagents: false`.
-- **Configuration**: One TOML file per agent under `.codex/agents/<ticket_id>.toml` defining `name`, `model`, and `model_reasoning_effort`.
+## Known Available, Unavailable, & Unknown Capabilities
+- **Available Capabilities (when evidenced):**
+  - Project and user configuration mutation via TOML.
+  - Per-agent model and reasoning effort configuration under `.codex/agents/*.toml`.
+  - MCP companion server registration in `.codex/mcp.json` or user `mcp.json`.
+  - Discrete reasoning effort controls (`low`, `medium`, `high`, `xhigh`).
+- **Unavailable Capabilities:**
+  - In-memory runtime session mutation without file persistence or session restart.
+  - Non-JSON MCP formats (MCP is strictly `mcpServers` JSON).
+- **Unknown Capabilities:**
+  - Model selection is `unknown` when no models are configured in TOML or runtime environment.
+  - Subagents and parallelism are `unknown` in clean unconfigured workspaces.
 
-## Parallelism Mechanism
-- **Concurrency Config**: `max_concurrency` in `config.toml` or `CODEX_MAX_CONCURRENCY` env variable.
-- **Strict Unknown Semantics**: When concurrency is unconfirmed, parallelism reports `unknown` and topology reports `supports_parallel_execution: false`.
+## Mutation Strategy & Validation Strategy
+- **Mutation Strategy:**
+  - Strict 2-phase lifecycle: `previewCompanionRegistration` / `previewConfiguration` produce frozen previews with unified diffs, explicit target paths, and SHA-256 hashes.
+  - `applyCompanionRegistration` and `applyConfiguration` consume exact approved previews and fail closed on hash mismatch or file drift.
+  - TOML modifications preserve non-target sections and keys.
+- **Validation Strategy:**
+  - Post-apply validation performs semantic verification:
+    1. Effective `model` in `config.toml` matches expected controller/main model.
+    2. Effective `model_reasoning_effort` in `config.toml` matches expected controller effort.
+    3. Each worker file in `.codex/agents/<ticket_id>.toml` matches expected worker model and reasoning effort.
+    4. MCP server entry in `mcp.json` is verified for syntax and command/args correctness.
 
-## Mutation Targets & Isolation
-- Single-pass plan renders to `<workspace>/.codex/config.toml`.
-- Decomposed plan renders main config plus separate agent configurations under `<workspace>/.codex/agents/<ticket_id>.toml`.
-- Minimal TOML modifications preserving unrelated configuration keys.
-
-## Apply Validation (§74)
-For decomposed configuration, validation inspects effective host state and verifies:
-1. `main model`: Verified against effective `model` in `config.toml`.
-2. `main reasoning effort`: Verified against `model_reasoning_effort` in `config.toml`.
-3. `worker model`: Verified against `model` in `.codex/agents/<ticket_id>.toml`.
-4. `worker reasoning effort`: Verified against `model_reasoning_effort` in `.codex/agents/<ticket_id>.toml`.
-
-## Known Unsupported Capabilities
-- In-memory runtime session mutation without file persistence.
-
-## Known Unknown Capabilities
-- Model selection is `unknown` when no models are configured in TOML or runtime environment.
-- Subagents and threads are `unknown` in bare unconfigured workspaces.

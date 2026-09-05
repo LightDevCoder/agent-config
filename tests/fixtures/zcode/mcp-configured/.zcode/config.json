@@ -1,0 +1,14 @@
+{
+  "model": "builtin:bigmodel/GLM-5.3",
+  "mcp": {
+    "servers": {
+      "agent-config": {
+        "type": "stdio",
+        "command": "agent-config",
+        "args": [
+          "serve"
+        ]
+      }
+    }
+  }
+}

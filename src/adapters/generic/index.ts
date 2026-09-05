@@ -75,13 +75,15 @@ export class GenericAdapter implements HostAdapter {
 
   async previewCompanionRegistration(
     _workspaceRoot?: string,
-    _scope?: "project" | "global" | "user"
+    scope?: "project" | "global" | "user"
   ): Promise<CompanionRegistrationPreview> {
+    const resolvedScope: "project" | "global" =
+      scope === "user" || scope === "global" ? "global" : "project";
     return {
       supported: false,
       adapter_id: this.id,
       host_id: this.id,
-      scope: "project",
+      scope: resolvedScope,
       mutation_targets: [],
       error: "Companion registration mutation is unsupported for generic host.",
     };
@@ -89,7 +91,8 @@ export class GenericAdapter implements HostAdapter {
 
   async applyCompanionRegistration(
     previewHash: string,
-    _workspaceRoot?: string
+    _workspaceRoot?: string,
+    _providedPreview?: CompanionRegistrationPreview
   ): Promise<ApplyResult> {
     return {
       success: false,

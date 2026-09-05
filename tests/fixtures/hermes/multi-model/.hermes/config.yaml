@@ -1,0 +1,19 @@
+model:
+  default: gemini-3.8-flash-high
+  aliases:
+    local: omlx/Qwen3.8-9B-mlx-4Bit
+providers:
+  omlx:
+    models:
+      - Qwen3.8-9B-mlx-4Bit
+custom_providers:
+  - name: cpa-gui
+    models:
+      claude-sonnet-4-6: {}
+      gpt-5.5: {}
+delegation:
+  model: omlx/Qwen3.8-9B-mlx-4Bit
+  max_concurrent_children: 4
+moa:
+  reference_models:
+    - model: deepseek/deepseek-v4-pro

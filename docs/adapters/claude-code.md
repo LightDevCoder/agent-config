@@ -1,9 +1,12 @@
-# Claude Code Adapter Evidence Record (§24, §27, §28)
+# Claude Code Adapter Evidence Record
 
-## 1. Harness Identity
+## Adapter ID
 - **Adapter ID:** `claude-code`
-- **Adapter Name:** Claude Code Adapter
-- **Primary Binary / Process Names:** `claude`, `claude-code`
+
+## Product / Harness Identity
+- **Product Name:** Claude Code (`claude-code`)
+- **Harness ID:** `claude-code`
+- **Binary / Executable Names:** `claude`, `claude-code` (e.g. `/Users/light/.local/bin/claude`)
 - **Runtime Environment Markers:**
   - `CLAUDE_CODE` (`1` or `true`)
   - `CLAUDE_CODE_ENTRY`
@@ -11,103 +14,141 @@
   - `CLAUDE_SESSION_ID`
   - `CLAUDE_CONFIG_DIR`
   - `CLAUDE_AUTO_COMPACT`
-  - Active process ancestry or title containing `claude`
+  - Active process title or binary basename matching `claude`
 
-## 2. Supported Versions
-- **Current Version Window:** `0.x` and `1.x` (supported, `fail_closed_for_mutation: false`)
-- **Compatibility Classifications:**
-  - `0.x`, `1.x`: `supported`
-  - `2.x`: `partially-supported`
+## Version Checked & Date Checked
+- **Version Checked:** `2.1.226 (Claude Code)` (installed on local host via `/Users/light/.local/bin/claude`)
+- **Date Checked:** 2026-09-05
+
+## Official Upstream, Documentation, & Config Schema Sources
+- **Official Upstream:** Anthropic Claude Code (`claude`)
+- **Official Documentation:** Built-in CLI help (`claude --help`, `claude mcp --help`, `claude mcp add --help`, `claude mcp list --help`, `claude doctor --help`, `claude agents --help`)
+- **Official Config/Schema Source:** JSON / JSONC settings hierarchy:
+  - Global user configuration: `~/.claude/settings.json`, `~/.claude.json`, `$CLAUDE_CONFIG_DIR/`
+  - Project configuration: `<workspace>/.claude/settings.json`, `<workspace>/.claude.json`
+  - Project MCP configuration: `<workspace>/.mcp.json` (native `claude mcp add --scope project`), `<workspace>/.claude/mcp.json`, or `<workspace>/.claude.json`
+  - User MCP configuration: `~/.claude.json` (native `claude mcp add --scope user`), `~/.claude/settings.json`
+  - Custom agent definitions: `<workspace>/.claude/agents/*.md`, `~/.claude/agents/*.md`
+
+## Executable Detection & Version Detection
+- **Executable Detection:**
+  - Active process check: `CLAUDE_CODE`, `CLAUDE_PROJECT_DIR`, `CLAUDE_SESSION_ID`, or process title/path.
+  - PATH lookup: `which claude` or `which claude-code`.
+  - Workspace markers: presence of `.claude/`, `.claude.json`, `.claude/settings.json`, `.claude/agents/`, or `.mcp.json`.
+  - User markers: presence of `~/.claude/`, `~/.claude.json`, or `$CLAUDE_CONFIG_DIR`.
+- **Version Detection:**
+  - Environment variables: `CLAUDE_VERSION`, `CLAUDE_CODE_VERSION`.
+  - CLI execution: `claude --version` or `claude -v` (emits e.g. `2.1.226 (Claude Code)`).
+  - File markers: `<workspace>/.claude/version`, `~/.claude/version`.
+- **Compatibility Classification:**
+  - `0.x`, `1.x`, `2.x`: `supported` (`fail_closed_for_mutation: false`)
   - Non-versioned or unevidenced: `unknown-version` (`fail_closed_for_mutation: true`)
   - Explicit `"incompatible"`: `incompatible` (`fail_closed_for_mutation: true`)
-- **Version Sources:**
-  - Environment: `CLAUDE_VERSION`, `CLAUDE_CODE_VERSION`
-  - Workspace: `.claude/version`, `.claude.json` (`version` field)
-  - User: `~/.claude/version`, `~/.claude.json` (`version` field)
 
-## 3. Evidence Sources
-- Inspection strictly uses host configuration files and active process/environment evidence.
-- No invented model inventories; models must be evidenced in project settings, user settings, custom agent frontmatters, or runtime environment.
-- No synthesized effort levels; reasoning effort is derived solely from evidenced `thinking` or `reasoning_effort` configurations.
+## Config Files, Scopes, & Precedence
+- **Host Config Files & Scopes:**
+  - User Scope: `~/.claude/settings.json`, `~/.claude.json` (stores user preferences, credentials, and user-scoped `mcpServers`), `~/.claude/agents/*.md`.
+  - Project Scope: `<workspace>/.claude/settings.json` (primary project settings), `<workspace>/.claude.json` (alternative project configuration), `<workspace>/.claude/agents/*.md` (project subagents), `<workspace>/.mcp.json` / `<workspace>/.claude/mcp.json` (project MCP servers).
+  - Local Scope: `<workspace>/.claude/settings.local.json`, user-local project settings in `~/.claude.json` under `projects[<cwd>]`.
+- **Config Hierarchy & Precedence:**
+  1. Project configuration (`.claude/settings.json`, `.claude.json`) overrides user configuration (`~/.claude/settings.json`, `~/.claude.json`).
+  2. Setting sources can be selectively loaded via `--setting-sources <sources>` (`user`, `project`, `local`).
+  3. Managed / enterprise settings (`managed-mcp.json`, policy settings) take ultimate precedence if configured by host.
+- **Scope Isolation:**
+  - Project preview and apply strictly mutate project files (`.claude/settings.json`, `.claude/agents/*.md`, project MCP target).
+  - User preview and apply strictly mutate user configuration files.
 
-## 4. Config Locations
-- **Project Scope:**
-  - `<workspace>/.claude/settings.json` (primary project settings)
-  - `<workspace>/.claude.json` (alternative project configuration)
-  - `<workspace>/.claude/config.json`
-  - `<workspace>/.claude/mcp.json` (project MCP servers)
-  - `<workspace>/.claude/agents/*.md` (project subagent definitions)
-- **User Scope:**
-  - `~/.claude/settings.json`
-  - `~/.claude.json` (user profile and configuration)
-  - `~/.claude/mcp.json`
-  - `~/.claude/agents/*.md`
-  - `$CLAUDE_CONFIG_DIR/` (overrides default `~/.claude`)
+## Model-Selection Mechanism
+- **Host Mechanism:**
+  - Selected via CLI flag `--model <model>` (e.g. `claude --model sonnet` or full model ID `claude-3-7-sonnet-20250219`).
+  - Configured in settings JSON via `"model": "..."` key (or `"fallback-model"`).
+  - Custom agents define model via YAML frontmatter `model: "..."` in `.claude/agents/<agent>.md`.
+- **Adapter Adaptation:**
+  - Enumerates models evidenced in project settings, user settings, custom agent frontmatters, or runtime environment variables (`CLAUDE_MODEL`).
+  - Strict reporting: if no models are configured or evidenced, returns empty inventory `[]` (never fabricates default models).
 
-## 5. Config Precedence
-1. Workspace project configuration (`.claude/settings.json`, `.claude.json`) overrides user configuration.
-2. User configuration (`~/.claude.json`, `~/.claude/settings.json`) serves as fallback defaults.
-3. Target mutation path selects existing project configuration files first (`.claude/settings.json` then `.claude.json`), defaulting to `.claude/settings.json`.
+## Reasoning / Effort / Variant Mechanism
+- **Host Mechanism:**
+  - Native CLI flag: `--effort <level>` with evidenced choices: `low`, `medium`, `high`, `xhigh`, `max`.
+  - Native configuration settings: `"thinking"` or `"effort"` in settings JSON.
+    - Extended thinking: `thinking: { "type": "enabled", "budget_tokens": 4096 }` or `thinking: { "supported_values": ["low", "medium", "high", "xhigh", "max"] }`.
+    - Session effort level: `"effort": "high"`.
+- **Adapter Adaptation:**
+  - Native fields: `thinking` (or `effort`).
+  - Honest reporting: if neither `thinking` nor `effort` is configured, reports reasoning capability `state = "unknown"` and supported effort values as `[]`. Does not synthesize fake effort arrays.
+  - Policy mapping:
+    - `"highest-supported"`: resolves to highest evidenced value (e.g. `"max"`, `"xhigh"`, or `"high"`).
+    - `"lowest-sufficient"` / `"lowest-supported"`: resolves to lowest evidenced value (e.g. `"low"`).
+    - `"configured"`: resolves to default or current value.
 
-## 6. MCP Mechanism
-- **Configuration Format:** JSON / JSONC with `mcpServers` dictionary.
-- **Server Entry Schema:**
-  ```json
-  {
-    "mcpServers": {
-      "agent-config": {
-        "command": "agent-config",
-        "args": ["serve"]
-      }
-    }
-  }
-  ```
-- **Registration Scopes:**
-  - Project scope: `<workspace>/.claude/mcp.json` or `.claude.json`
-  - User scope: `~/.claude/mcp.json` or `~/.claude.json`
-- **Safe Mutation:** Previews generate unified diffs; apply requires cryptographic hash match; syntax errors fail closed.
-
-## 7. Model Mechanism
-- **Model Key:** `model` string, optional `models` list in configuration.
-- **Typical Models:** `claude-3-7-sonnet-20250219`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`, or routed proxies.
-- **Subagent Overrides:** Defined individually in agent frontmatter (`model: "..."`).
-- **Inventory Rule:** If unconfigured and no runtime evidence exists, returns empty inventory `[]` (never fabricates).
-
-## 8. Reasoning Mechanism
-- **Native Host Field:** `thinking` (or `reasoning_effort`)
-- **Thinking Configuration:**
-  - `thinking: { "type": "enabled", "budget_tokens": 4096 }`
-  - Or `supported_effort_values: ["low", "medium", "high"]`
-- **Honest Reporting:** If no thinking/reasoning is configured, reports `reasoning.state = "unknown"`, `supported_effort_values = []`, and `inspectReasoningOptions.supported_values = []`. Does not synthesize fake effort arrays.
-
-## 9. Subagent Mechanism
-- **File Format:** Markdown files with YAML frontmatter located in `.claude/agents/*.md`:
-  ```markdown
-  ---
-  name: "worker-agent"
-  model: "claude-3-5-haiku-20241022"
-  description: "Delegated explorer"
-  ---
-  Agent prompt and instructions.
-  ```
-- **Capability Evidence:**
+## Agent / Subagent Mechanism, Workers, & Parallelism
+- **Host Mechanism:**
+  - Custom agents defined as Markdown files with YAML frontmatter located in `.claude/agents/*.md` (both workspace project scope and user `~/.claude/agents/` scope).
+  - Each agent markdown file defines:
+    ```markdown
+    ---
+    name: "worker-agent"
+    model: "claude-3-5-haiku-20241022"
+    description: "Delegated worker"
+    ---
+    System prompt and instructions.
+    ```
+  - Dispatched via CLI: `claude --agent <agent>` or managed via `claude agents` command.
+  - Concurrency configured via `concurrency` or `max_concurrency` setting in configuration, or `CLAUDE_MAX_CONCURRENCY` env.
+- **Adapter Adaptation:**
   - Presence of `.claude/agents/` directory or custom agent files evidences `subagents.state = "available"`.
   - In absence of agent directory or files, reports `unknown`.
-- **Per-Agent Model Control:** Supported via `model` frontmatter attribute in each agent markdown file.
+  - Decomposed execution plans render isolated per-work-item files under `.claude/agents/<ticket_id>.md`.
+  - Parallelism is `available` only when concurrency > 1 is confirmed. Otherwise reports `unknown`.
 
-## 10. Parallelism Mechanism
-- Derived strictly from `concurrency` or `max_concurrency` setting in configuration, or `CLAUDE_MAX_CONCURRENCY` environment variable.
-- If concurrency limit > 1 is evidenced: `parallelism.state = "available"`, `supports_parallel_execution: true`.
-- If unconfirmed: `parallelism.state = "unknown"`, `supports_parallel_execution: false`.
+## MCP Support, Registration Mechanism, Scopes, & Doctor/Status
+- **Host Mechanism:**
+  - Native CLI management: `claude mcp add --scope <local|user|project> <name> <commandOrUrl> [args...]`, `claude mcp add-json`, `claude mcp list`, `claude mcp get <name>`, `claude mcp remove`.
+  - Formats and targets:
+    - Project scope: `.mcp.json` at project root (or `.claude/mcp.json` / `.claude.json`), using `{"mcpServers": { ... }}`.
+    - User scope: `~/.claude.json` or `~/.claude/settings.json`, using `{"mcpServers": { ... }}`.
+    - Local scope: `~/.claude.json` under `projects[<cwd>].mcpServers`.
+  - Health/doctor: `claude mcp list` health-checks approved servers; `claude doctor` validates installation and settings files.
+- **Adapter Adaptation:**
+  - In project scope, checks existing project MCP targets (`.mcp.json`, `.claude/mcp.json`, `.claude.json`, `.claude/settings.json`).
+  - Previews produce exact unified diffs with cryptographic baseline hash and preview hash (`FrozenMutationPreview`).
+  - Apply strictly preserves scope without re-deriving targets.
 
-## 11. Mutation Targets
-- `<workspace>/.claude/settings.json` (or `.claude.json`): updates model, thinking.
-- `<workspace>/.claude/mcp.json`: adds `agent-config` companion MCP server.
-- `<workspace>/.claude/agents/<ticket_id>.md`: generates isolated subagent instructions with frontmatter.
+## Machine-Readable Inspection Surfaces
+- Settings files: `.claude/settings.json`, `.claude.json`, `.claude.local.json`, `~/.claude.json`.
+- MCP targets: `.mcp.json`, `.claude/mcp.json`, `~/.claude.json`.
+- Agents directory: `.claude/agents/*.md`, `~/.claude/agents/*.md`.
+- CLI commands: `claude --version`, `claude mcp list`, `claude doctor`, `claude agents --json`.
 
-## 12. Known Unsupported Capabilities
-- Live session memory mutation without restarting or resetting session context.
-- Arbitrary non-JSON configuration files (Claude Code is strictly JSON / Markdown frontmatter).
+## Writable Configuration Targets & Protected Configuration
+- **Writable Targets:**
+  - Project Scope: `<workspace>/.claude/settings.json`, `<workspace>/.claude/agents/<ticket_id>.md`, `<workspace>/.claude/mcp.json` or `<workspace>/.mcp.json`.
+  - User Scope: `~/.claude/settings.json`, `~/.claude.json`.
+- **Protected / Managed Configuration:**
+  - Preserves unrelated user/project settings (`allowedTools`, `theme`, `permissions`, `projects`, etc.) via JSONC edit preserving comments and structure.
+  - Preserves existing custom agents in `.claude/agents/` not managed by current plan.
 
-## 13. Known Unknown Capabilities
-- Dynamic cloud token quotas and rate limit concurrency bounds when running in unmetered interactive CLI sessions without host telemetry.
+## Known Available, Unavailable, & Unknown Capabilities
+- **Available Capabilities (when evidenced):**
+  - Project and user settings configuration.
+  - Custom agent definitions via `.claude/agents/*.md` with per-agent model frontmatter.
+  - MCP registration across project and user scopes.
+  - Headless/programmatic execution via `claude -p / --print`.
+- **Unavailable Capabilities:**
+  - In-memory session mutation without restarting CLI session or starting a new session.
+  - Unstructured/non-JSON configuration files (Claude Code expects JSONC and Markdown frontmatter).
+- **Unknown Capabilities:**
+  - Cloud token quotas, remote control connection endpoints, and dynamic rate limits in unmetered interactive CLI sessions without host telemetry.
+
+## Mutation Strategy & Validation Strategy
+- **Mutation Strategy:**
+  - Strict 2-phase lifecycle: `previewCompanionRegistration` / `previewConfiguration` generate frozen previews with exact targets, baseline hashes, and unified diffs.
+  - `applyCompanionRegistration` and `applyConfiguration` consume exact approved previews and fail closed on hash mismatch.
+  - JSON editing uses non-destructive parser (`jsonc-parser`) preserving formatting and comments.
+- **Validation Strategy:**
+  - Semantic verification on post-apply state:
+    1. Effective `model` in settings matches expected controller model.
+    2. Effective `thinking` / `effort` matches expected controller reasoning effort.
+    3. Each worker markdown file in `.claude/agents/<ticket_id>.md` is parsed for YAML frontmatter `model` and validated.
+    4. MCP server entry is verified in the effective registration target.
+

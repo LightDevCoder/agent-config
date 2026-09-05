@@ -514,7 +514,7 @@ describe("Grok Build Native Adapter Tests (§44, §45, §46, §47, §48)", () =>
       expect(preview.supported).toBe(true);
       expect(preview.preview_id).toBeDefined();
       expect(preview.preview_hash).toBeDefined();
-      expect(preview.diff).toContain("[mcp.servers.agent-config]");
+      expect(preview.diff).toContain("[mcp_servers.agent-config]");
       expect(preview.mutation_targets).toEqual([path.join(grokDir, "config.toml")]);
     });
 
@@ -550,11 +550,55 @@ describe("Grok Build Native Adapter Tests (§44, §45, §46, §47, §48)", () =>
 
       expect(applyResult.success).toBe(true);
       const updated = await fsp.readFile(path.join(grokDir, "config.toml"), "utf-8");
-      expect(updated).toContain("[mcp.servers.agent-config]");
+      expect(updated).toContain("[mcp_servers.agent-config]");
       expect(updated).toContain('command = "agent-config"');
     });
 
-    it("rejects companion apply with mismatched preview hash", async () => {
+      it("strictly isolates scope mutations: preview project scope modifies ONLY project config and preview user scope modifies ONLY user config (SPEC §48)", async () => {
+        // Setup both project config and user config
+        const projGrokDir = path.join(workspaceDir, ".grok");
+        await fsp.mkdir(projGrokDir, { recursive: true });
+        const projConfigFile = path.join(projGrokDir, "config.toml");
+        await fsp.writeFile(projConfigFile, 'model = "initial-proj-model"\n', "utf-8");
+
+        const userGrokDir = path.join(userHomeDir, ".grok");
+        await fsp.mkdir(userGrokDir, { recursive: true });
+        const userConfigFile = path.join(userGrokDir, "config.toml");
+        await fsp.writeFile(userConfigFile, 'model = "initial-user-model"\n', "utf-8");
+
+        const adapter = new GrokBuildAdapter();
+
+        // 1. Companion registration project scope
+        const projPreview = await adapter.previewCompanionRegistration(workspaceDir, "project");
+        expect(projPreview.mutation_targets).toEqual([projConfigFile]);
+        expect(projPreview.scope).toBe("project");
+
+        const projApply = await adapter.applyCompanionRegistration(projPreview.preview_hash!, workspaceDir, projPreview);
+        expect(projApply.success).toBe(true);
+        expect(projApply.applied_targets).toEqual([projConfigFile]);
+
+        // Verify ONLY project config was modified, user config is untouched
+        const projContentAfter = await fsp.readFile(projConfigFile, "utf-8");
+        expect(projContentAfter).toContain("[mcp_servers.agent-config]");
+        const userContentAfterProj = await fsp.readFile(userConfigFile, "utf-8");
+        expect(userContentAfterProj).not.toContain("[mcp_servers.agent-config]");
+        expect(userContentAfterProj).toBe('model = "initial-user-model"\n');
+
+        // 2. Companion registration user scope
+        const userPreview = await adapter.previewCompanionRegistration(workspaceDir, "user");
+        expect(userPreview.mutation_targets).toEqual([userConfigFile]);
+        expect(userPreview.scope).toBe("global");
+
+        const userApply = await adapter.applyCompanionRegistration(userPreview.preview_hash!, workspaceDir, userPreview);
+        expect(userApply.success).toBe(true);
+        expect(userApply.applied_targets).toEqual([userConfigFile]);
+
+        // Verify user config was modified, project config did not get re-modified or corrupted
+        const userContentAfterUser = await fsp.readFile(userConfigFile, "utf-8");
+        expect(userContentAfterUser).toContain("[mcp_servers.agent-config]");
+      });
+
+      it("rejects companion apply with mismatched preview hash", async () => {
       const adapter = new GrokBuildAdapter();
       const applyResult = await adapter.applyCompanionRegistration("bogus-preview-hash-999", workspaceDir);
       expect(applyResult.success).toBe(false);

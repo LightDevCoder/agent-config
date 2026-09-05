@@ -1,9 +1,0 @@
-{
-  "schema_version": "1.0",
-  "host_id": "kiro",
-  "fingerprint": "stale-fp-007",
-  "generated_at": "2024-01-01T00:00:00.000Z",
-  "single_model": {
-    "model": "kiro-legacy-agent"
-  }
-}

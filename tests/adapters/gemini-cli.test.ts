@@ -252,8 +252,8 @@ describe("Gemini CLI Native Adapter Tests (§33)", () => {
 
       const adapter = new GeminiCliAdapter();
       const reasoning = await adapter.inspectReasoningOptions(workspaceDir);
-      expect(reasoning.supported_values).toContain("low");
-      expect(reasoning.supported_values).toContain("high");
+      // Zero capability guessing: only explicitly evidenced values are reported (§17)
+      expect(reasoning.supported_values).toEqual(["high"]);
       expect(reasoning.default_value).toBe("high");
 
       const caps = await adapter.inspectCapabilities(workspaceDir);
@@ -323,6 +323,17 @@ describe("Gemini CLI Native Adapter Tests (§33)", () => {
       const status = await adapter.inspectCompanionRegistration(workspaceDir);
       expect(status.registered).toBe(true);
       expect(status.command).toBe("agent-config");
+    });
+
+    it("previews companion registration strictly targeting global scope when scope is global", async () => {
+      const adapter = new GeminiCliAdapter();
+      const preview = await adapter.previewCompanionRegistration(workspaceDir, "global");
+
+      expect(preview.supported).toBe(true);
+      expect(preview.scope).toBe("global");
+      expect(preview.target_file).toBe(path.join(userHomeDir, ".gemini", "config.json"));
+      expect(preview.mutation_targets).toContain(path.join(userHomeDir, ".gemini", "config.json"));
+      expect(preview.preview_hash).toBeDefined();
     });
   });
 

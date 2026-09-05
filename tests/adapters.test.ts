@@ -500,24 +500,40 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
   });
 
   describe("Adapter Registry Resolution", () => {
-    it("registers Codex, OpenCode, and Generic adapters by default", () => {
+    it("registers exactly 9 native adapters and 1 fallback adapter by default", () => {
       const registry = new AdapterRegistry();
       const adapters = registry.listAdapters();
       const ids = adapters.map((a) => a.id);
 
+      // Verify exact count: 9 native adapters + 1 fallback generic adapter
+      const nativeAdapters = adapters.filter((a) => a.id !== "generic");
+      expect(nativeAdapters.length).toBe(9);
+      expect(adapters.length).toBe(10);
+
+      // Verify the exact 9 native adapters
       expect(ids).toContain("codex");
       expect(ids).toContain("opencode");
       expect(ids).toContain("claude-code");
-      expect(ids).toContain("copilot-cli");
       expect(ids).toContain("gemini-cli");
       expect(ids).toContain("cursor");
       expect(ids).toContain("dsh");
       expect(ids).toContain("grok-build");
-      expect(ids).toContain("amp");
-      expect(ids).toContain("windsurf");
-      expect(ids).toContain("cline");
-      expect(ids).toContain("roo-code");
+      expect(ids).toContain("zcode");
+      expect(ids).toContain("hermes");
+
+      // Verify generic fallback
       expect(ids).toContain("generic");
+
+      // Verify all deleted non-v1 adapters are purged from registry
+      expect(ids).not.toContain("copilot-cli");
+      expect(ids).not.toContain("kiro");
+      expect(ids).not.toContain("zed");
+      expect(ids).not.toContain("amp");
+      expect(ids).not.toContain("windsurf");
+      expect(ids).not.toContain("cline");
+      expect(ids).not.toContain("roo-code");
+      // Verify Pi is deferred and NOT in native registry
+      expect(ids).not.toContain("pi");
     });
 
     it("resolves specific adapter when host_id is supplied", async () => {
@@ -578,38 +594,6 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
 
       const resolved = await registry.resolveAdapter(workspaceDir);
       expect(resolved.id).toBe("grok-build");
-    });
-
-    it("resolves Amp adapter when workspace has .amp directory", async () => {
-      const registry = new AdapterRegistry();
-      await fsp.mkdir(path.join(workspaceDir, ".amp"), { recursive: true });
-
-      const resolved = await registry.resolveAdapter(workspaceDir);
-      expect(resolved.id).toBe("amp");
-    });
-
-    it("resolves Windsurf adapter when workspace has .windsurf directory", async () => {
-      const registry = new AdapterRegistry();
-      await fsp.mkdir(path.join(workspaceDir, ".windsurf"), { recursive: true });
-
-      const resolved = await registry.resolveAdapter(workspaceDir);
-      expect(resolved.id).toBe("windsurf");
-    });
-
-    it("resolves Cline adapter when workspace has .cline directory", async () => {
-      const registry = new AdapterRegistry();
-      await fsp.mkdir(path.join(workspaceDir, ".cline"), { recursive: true });
-
-      const resolved = await registry.resolveAdapter(workspaceDir);
-      expect(resolved.id).toBe("cline");
-    });
-
-    it("resolves Roo Code adapter when workspace has .roo directory", async () => {
-      const registry = new AdapterRegistry();
-      await fsp.mkdir(path.join(workspaceDir, ".roo"), { recursive: true });
-
-      const resolved = await registry.resolveAdapter(workspaceDir);
-      expect(resolved.id).toBe("roo-code");
     });
   });
 
@@ -706,7 +690,15 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
       expect(genericOptions.supported_values).toEqual([]);
     });
 
-    it("resolves abstract reasoning policies to host-native representations for Codex", async () => {
+    it("resolves abstract reasoning policies to host-native representations for Codex when evidenced", async () => {
+      const codexDir = path.join(workspaceDir, ".codex");
+      await fsp.mkdir(codexDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(codexDir, "config.toml"),
+        'model = "o3-mini"\nmodel_reasoning_effort = "high"\n',
+        "utf-8"
+      );
+
       const codex = new CodexAdapter();
 
       const high = await codex.resolveReasoningPolicy("highest-supported", undefined, workspaceDir);
@@ -718,13 +710,13 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
       const low = await codex.resolveReasoningPolicy("lowest-sufficient", undefined, workspaceDir);
       expect(low).toEqual({
         host_field: "model_reasoning_effort",
-        host_value: "low",
+        host_value: "high",
       });
 
       const configured = await codex.resolveReasoningPolicy("configured", undefined, workspaceDir);
       expect(configured).toEqual({
         host_field: "model_reasoning_effort",
-        host_value: "medium",
+        host_value: "high",
       });
     });
 
@@ -769,6 +761,14 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
     });
 
     it("resolveHostReasoningPolicy helper functions host-neutrally across all adapters", async () => {
+      const codexDir = path.join(workspaceDir, ".codex");
+      await fsp.mkdir(codexDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(codexDir, "config.toml"),
+        'model = "o3-mini"\nmodel_reasoning_effort = "high"\n',
+        "utf-8"
+      );
+
       const codex = new CodexAdapter();
       const generic = new GenericAdapter();
 

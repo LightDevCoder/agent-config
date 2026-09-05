@@ -3,17 +3,12 @@ import { GenericAdapter } from "./generic/index.js";
 import { CodexAdapter } from "./codex/index.js";
 import { OpenCodeAdapter } from "./opencode/index.js";
 import { ClaudeCodeAdapter } from "./claude-code/index.js";
-import { CopilotCliAdapter } from "./copilot-cli/index.js";
 import { GeminiCliAdapter } from "./gemini-cli/index.js";
 import { CursorAdapter } from "./cursor/index.js";
-import { KiroAdapter } from "./kiro/index.js";
-import { ZedAdapter } from "./zed/index.js";
 import { DshAdapter } from "./dsh/index.js";
 import { GrokBuildAdapter } from "./grok-build/index.js";
-import { AmpAdapter } from "./amp/index.js";
-import { WindsurfAdapter } from "./windsurf/index.js";
-import { ClineAdapter } from "./cline/index.js";
-import { RooCodeAdapter } from "./roo-code/index.js";
+import { ZCodeAdapter } from "./zcode/index.js";
+import { HermesAdapter } from "./hermes/index.js";
 
 export type DisambiguationHandler = (
   candidates: string[]
@@ -49,26 +44,26 @@ export class AdapterRegistry {
   constructor(defaultAdapter?: HostAdapter) {
     this.defaultAdapter = defaultAdapter || new GenericAdapter();
 
-    // Register built-in adapters
+    // Register built-in adapters (exactly 9 native adapters + 1 fallback)
     this.register(new CodexAdapter());
     this.register(new OpenCodeAdapter());
     this.register(new ClaudeCodeAdapter());
-    this.register(new CopilotCliAdapter());
     this.register(new GeminiCliAdapter());
     this.register(new CursorAdapter());
-    this.register(new KiroAdapter());
-    this.register(new ZedAdapter());
     this.register(new DshAdapter());
     this.register(new GrokBuildAdapter());
-    this.register(new AmpAdapter());
-    this.register(new WindsurfAdapter());
-    this.register(new ClineAdapter());
-    this.register(new RooCodeAdapter());
+    this.register(new ZCodeAdapter());
+    this.register(new HermesAdapter());
     this.register(this.defaultAdapter);
   }
 
   register(adapter: HostAdapter): void {
     this.adapters.set(adapter.id, adapter);
+    if (adapter.aliases) {
+      for (const alias of adapter.aliases) {
+        this.adapters.set(alias, adapter);
+      }
+    }
   }
 
   getAdapter(id: string): HostAdapter | undefined {
@@ -85,8 +80,11 @@ export class AdapterRegistry {
    */
   async detectAllCandidates(workspacePath?: string): Promise<string[]> {
     const candidates: string[] = [];
+    const seen = new Set<HostAdapter>();
     for (const adapter of this.adapters.values()) {
       if (adapter.id === "generic") continue;
+      if (seen.has(adapter)) continue;
+      seen.add(adapter);
       try {
         if (await adapter.identifyHost(workspacePath)) {
           candidates.push(adapter.id);
@@ -168,7 +166,15 @@ export class AdapterRegistry {
   }
 
   listAdapters(): HostAdapter[] {
-    return Array.from(this.adapters.values());
+    const seen = new Set<HostAdapter>();
+    const list: HostAdapter[] = [];
+    for (const adapter of this.adapters.values()) {
+      if (!seen.has(adapter)) {
+        seen.add(adapter);
+        list.push(adapter);
+      }
+    }
+    return list;
   }
 }
 

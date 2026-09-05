@@ -7,7 +7,7 @@ import { ExecutionConfig, AgentProfile } from "../profile/schema.js";
 export type CapabilityState = "available" | "unavailable" | "unknown";
 
 export interface HostModelEvidence {
-  kind: "host-runtime" | "host-config" | "adapter-probe" | "fallback-default";
+  kind: "host-runtime" | "host-config" | "host-schema" | "adapter-probe" | "user-confirmed";
   locator: string;
   observed_at?: string;
 }
@@ -140,6 +140,9 @@ export interface TopologyCapabilities {
  */
 export interface CompanionRegistrationStatus {
   registered: boolean;
+  configured?: boolean;
+  reachable?: boolean;
+  healthy?: boolean;
   transport?: "stdio" | "sse" | "websocket" | "http";
   command?: string;
   args?: string[];
@@ -156,7 +159,8 @@ export interface CompanionRegistrationPreview {
   supported: boolean;
   adapter_id?: string;
   host_id?: string;
-  scope?: "project" | "global";
+  host_version?: string;
+  scope?: "project" | "global" | "user";
   preview_id?: string;
   preview_hash?: string;
   target_file?: string;
@@ -179,6 +183,7 @@ export interface ResolvedReasoningPolicy {
 export interface HostAdapter {
   readonly id: string;
   readonly name: string;
+  readonly aliases?: string[];
 
   identifyHost(workspaceRoot?: string): Promise<boolean>;
   inspectVersion(workspaceRoot?: string): Promise<HostVersionInfo>;
@@ -195,7 +200,11 @@ export interface HostAdapter {
     workspaceRoot?: string,
     scope?: "project" | "global" | "user"
   ): Promise<CompanionRegistrationPreview>;
-  applyCompanionRegistration(previewHash: string, workspaceRoot?: string): Promise<ApplyResult>;
+  applyCompanionRegistration(
+    previewHash: string,
+    workspaceRoot?: string,
+    preview?: CompanionRegistrationPreview
+  ): Promise<ApplyResult>;
   validateCompanionRegistration(workspaceRoot?: string): Promise<ValidationResult>;
   previewConfiguration(
     plan: ExecutionConfig,

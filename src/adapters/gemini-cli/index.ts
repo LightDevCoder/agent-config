@@ -30,24 +30,36 @@ import { createUnifiedDiff } from "../diff.js";
  */
 export class GeminiCliAdapter implements HostAdapter {
   readonly id = "gemini-cli";
-  readonly name = "Gemini CLI Adapter";
+  readonly name = "Antigravity / Gemini CLI Adapter";
+  readonly aliases = ["antigravity"];
 
   hasActiveRuntimeContext(_workspaceRoot?: string): boolean {
     if (
       process.env.GEMINI_CLI === "1" ||
       process.env.GEMINI_CLI === "true" ||
+      process.env.ANTIGRAVITY === "1" ||
+      process.env.ANTIGRAVITY === "true" ||
       (process.env.GEMINI_PROJECT_DIR && process.env.GEMINI_PROJECT_DIR !== "undefined") ||
       (process.env.GEMINI_SESSION_ID && process.env.GEMINI_SESSION_ID !== "undefined") ||
       (process.env.GEMINI_CONFIG_DIR && process.env.GEMINI_CONFIG_DIR !== "undefined") ||
-      (process.env.GEMINI_HOME && process.env.GEMINI_HOME !== "undefined")
+      (process.env.GEMINI_HOME && process.env.GEMINI_HOME !== "undefined") ||
+      (process.env.ANTIGRAVITY_HOME && process.env.ANTIGRAVITY_HOME !== "undefined")
     ) {
       return true;
     }
 
-    if (process.env._ && path.basename(process.env._).toLowerCase().includes("gemini")) {
+    if (
+      process.env._ &&
+      (path.basename(process.env._).toLowerCase().includes("gemini") ||
+        path.basename(process.env._).toLowerCase().includes("antigravity"))
+    ) {
       return true;
     }
-    if (process.title && path.basename(process.title).toLowerCase().includes("gemini")) {
+    if (
+      process.title &&
+      (path.basename(process.title).toLowerCase().includes("gemini") ||
+        path.basename(process.title).toLowerCase().includes("antigravity"))
+    ) {
       return true;
     }
     return false;
@@ -96,6 +108,8 @@ export class GeminiCliAdapter implements HostAdapter {
       const globalCandidates = [
         this.getGlobalGeminiDir(),
         path.join(os.homedir(), ".gemini"),
+        path.join(os.homedir(), ".gemini", "config"),
+        path.join(os.homedir(), ".gemini", "antigravity"),
         path.join(os.homedir(), ".gemini", "config.json"),
         path.join(os.homedir(), ".config", "gemini"),
         path.join(os.homedir(), ".config", "gemini", "config.json"),
@@ -136,7 +150,10 @@ export class GeminiCliAdapter implements HostAdapter {
     }
 
     if (!version) {
-      const cliResult = await this.runCliCommand("gemini", ["--version"], workspaceRoot);
+      let cliResult = await this.runCliCommand("gemini", ["--version"], workspaceRoot);
+      if (!cliResult) {
+        cliResult = await this.runCliCommand("antigravity", ["--version"], workspaceRoot);
+      }
       if (cliResult && cliResult.stdout.trim().length > 0) {
         raw = cliResult.stdout.trim().split(/\r?\n/)[0];
         const match = raw.match(/\d+\.\d+(\.\d+)?/);
@@ -204,6 +221,7 @@ export class GeminiCliAdapter implements HostAdapter {
     const userCandidates = [
       path.join(this.getGlobalGeminiDir(), "config.json"),
       path.join(this.getGlobalGeminiDir(), "settings.json"),
+      path.join(os.homedir(), ".gemini", "config", "config.json"),
       path.join(os.homedir(), ".gemini", "config.json"),
       path.join(os.homedir(), ".config", "gemini", "config.json"),
       path.join(os.homedir(), "gemini.json"),
@@ -334,11 +352,11 @@ export class GeminiCliAdapter implements HostAdapter {
     }
 
     if (reasoningVal) {
-      const supported = ["low", "medium", "high"];
+      const valStr = String(reasoningVal);
       return {
         native_field: "reasoning_effort",
-        supported_values: supported,
-        default_value: typeof reasoningVal === "string" ? reasoningVal : "medium",
+        supported_values: [valStr],
+        default_value: valStr,
       };
     }
 
@@ -425,6 +443,8 @@ export class GeminiCliAdapter implements HostAdapter {
       path.join(workspace, "gemini.json"),
       path.join(workspace, ".gemini", "mcp.json"),
       path.join(this.getGlobalGeminiDir(), "config.json"),
+      path.join(os.homedir(), ".gemini", "config", "config.json"),
+      path.join(os.homedir(), ".gemini", "config", "mcp_config.json"),
       path.join(os.homedir(), ".gemini", "config.json"),
       path.join(os.homedir(), ".config", "gemini", "config.json"),
     ];
@@ -457,11 +477,11 @@ export class GeminiCliAdapter implements HostAdapter {
       }
     }
 
-    const defaultTarget = this.determineMcpRegistrationPath(workspace);
     const resolvedScope: "project" | "global" =
       scope === "global" || scope === "user" || (!scope && !workspaceRoot)
         ? "global"
         : "project";
+    const defaultTarget = this.determineMcpRegistrationPath(workspace, resolvedScope);
     return {
       registered: false,
       scope: resolvedScope,
@@ -475,11 +495,11 @@ export class GeminiCliAdapter implements HostAdapter {
     scope?: "project" | "global" | "user"
   ): Promise<CompanionRegistrationPreview> {
     const workspace = workspaceRoot || process.cwd();
-    const targetFile = this.determineMcpRegistrationPath(workspace);
     const resolvedScope: "project" | "global" =
       scope === "global" || scope === "user" || (!scope && !workspaceRoot)
         ? "global"
         : "project";
+    const targetFile = this.determineMcpRegistrationPath(workspace, resolvedScope);
 
     let existingContent: string | null = null;
     let initialText = "{\n  \"mcp\": {\n    \"servers\": {}\n  }\n}\n";
@@ -568,9 +588,10 @@ export class GeminiCliAdapter implements HostAdapter {
 
   async applyCompanionRegistration(
     previewHash: string,
-    workspaceRoot?: string
+    workspaceRoot?: string,
+    providedPreview?: CompanionRegistrationPreview
   ): Promise<ApplyResult> {
-    const preview = await this.previewCompanionRegistration(workspaceRoot);
+    const preview = providedPreview || (await this.previewCompanionRegistration(workspaceRoot));
     if (!preview.supported || !preview.files || preview.files.length === 0) {
       return {
         success: false,
@@ -810,7 +831,19 @@ export class GeminiCliAdapter implements HostAdapter {
     return path.join(os.homedir(), ".gemini");
   }
 
-  determineMcpRegistrationPath(workspace: string): string {
+  determineMcpRegistrationPath(workspace: string, scope?: "project" | "global" | "user"): string {
+    if (scope === "global" || scope === "user" || !workspace) {
+      const userCandidates = [
+        path.join(this.getGlobalGeminiDir(), "config.json"),
+        path.join(os.homedir(), ".gemini", "config", "config.json"),
+        path.join(os.homedir(), ".gemini", "config.json"),
+      ];
+      for (const c of userCandidates) {
+        if (fs.existsSync(c)) return c;
+      }
+      return path.join(this.getGlobalGeminiDir(), "config.json");
+    }
+
     const candidates = [
       path.join(workspace, ".gemini", "config.json"),
       path.join(workspace, ".gemini", "settings.json"),

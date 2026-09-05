@@ -1,0 +1,27 @@
+{
+  "model": "builtin:bigmodel/GLM-5.3",
+  "provider": {
+    "builtin:bigmodel": {
+      "models": {
+        "GLM-5.3": {
+          "reasoning": {
+            "variants": [
+              "low",
+              "max",
+              "high"
+            ]
+          }
+        },
+        "GLM-5.3-Flash": {
+          "reasoning": {
+            "variants": [
+              "low",
+              "high"
+            ]
+          }
+        },
+        "GLM-5-Turbo": {}
+      }
+    }
+  }
+}

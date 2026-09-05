@@ -300,11 +300,11 @@ export class CursorAdapter implements HostAdapter {
     }
 
     if (reasoningVal) {
-      const supported = ["low", "medium", "high"];
+      const valStr = String(reasoningVal);
       return {
         native_field: "cursor.reasoningEffort",
-        supported_values: supported,
-        default_value: typeof reasoningVal === "string" ? reasoningVal : "medium",
+        supported_values: [valStr],
+        default_value: valStr,
       };
     }
 
@@ -328,7 +328,8 @@ export class CursorAdapter implements HostAdapter {
     );
 
     if (parallelEnabled) {
-      const concurrency = Number(cfg["cursor.maxConcurrency"] || cfg["cursor.concurrency"] || 4);
+      const concurrencyVal = cfg["cursor.maxConcurrency"] || cfg["cursor.concurrency"];
+      const concurrency = typeof concurrencyVal === "number" && concurrencyVal > 0 ? concurrencyVal : undefined;
       return {
         supports_single_session: true,
         supports_subagents: true,
@@ -490,11 +491,14 @@ export class CursorAdapter implements HostAdapter {
       };
     }
 
-    const defaultTarget = path.join(workspace, ".cursor", "mcp.json");
     const resolvedScope: "project" | "global" =
       scope === "global" || scope === "user" || (!scope && !workspaceRoot)
         ? "global"
         : "project";
+    const defaultTarget =
+      resolvedScope === "global"
+        ? path.join(this.getGlobalCursorDir(), "mcp.json")
+        : path.join(workspace, ".cursor", "mcp.json");
     return {
       registered: false,
       scope: resolvedScope,
@@ -508,11 +512,14 @@ export class CursorAdapter implements HostAdapter {
     scope?: "project" | "global" | "user"
   ): Promise<CompanionRegistrationPreview> {
     const workspace = workspaceRoot || process.cwd();
-    const targetFile = path.join(workspace, ".cursor", "mcp.json");
     const resolvedScope: "project" | "global" =
       scope === "global" || scope === "user" || (!scope && !workspaceRoot)
         ? "global"
         : "project";
+    const targetFile =
+      resolvedScope === "global"
+        ? path.join(this.getGlobalCursorDir(), "mcp.json")
+        : path.join(workspace, ".cursor", "mcp.json");
 
     let existingContent: string | null = null;
     let initialText = "{\n  \"mcpServers\": {}\n}\n";
@@ -567,9 +574,10 @@ export class CursorAdapter implements HostAdapter {
 
   async applyCompanionRegistration(
     previewHash: string,
-    workspaceRoot?: string
+    workspaceRoot?: string,
+    providedPreview?: CompanionRegistrationPreview
   ): Promise<ApplyResult> {
-    const preview = await this.previewCompanionRegistration(workspaceRoot);
+    const preview = providedPreview || (await this.previewCompanionRegistration(workspaceRoot));
     if (!preview.supported || !preview.files || preview.files.length === 0) {
       return {
         success: false,

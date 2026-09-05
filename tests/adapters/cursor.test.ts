@@ -259,6 +259,17 @@ describe("Cursor Native Adapter Tests (§36)", () => {
       expect((status.details as any)?.source).toBe("user-config");
       expect(status.target_file).toBe(path.join(userCursorDir, "mcp.json"));
     });
+
+    it("previews companion registration strictly targeting global scope when scope is global", async () => {
+      const adapter = new CursorAdapter();
+      const preview = await adapter.previewCompanionRegistration(workspaceDir, "global");
+
+      expect(preview.supported).toBe(true);
+      expect(preview.scope).toBe("global");
+      expect(preview.target_file).toBe(path.join(userHomeDir, ".cursor", "mcp.json"));
+      expect(preview.mutation_targets).toContain(path.join(userHomeDir, ".cursor", "mcp.json"));
+      expect(preview.preview_hash).toBeDefined();
+    });
   });
 
   describe("Model Controls & Settings Hierarchy", () => {

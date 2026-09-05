@@ -180,6 +180,88 @@ describe("OpenCode Native Adapter Hardening Tests (§29, §30, §31, §32, §75)
       expect(models.some((m) => m.id === "anthropic/claude-3-7-sonnet")).toBe(true);
       expect(models.some((m) => m.id === "openai/o3-mini")).toBe(true);
     });
+
+    it("project strictly overrides conflicting global settings (SPEC §44: effective value MUST be project, NOT union or first-found)", async () => {
+      // Global defines setting X across multiple fields (model, variant, concurrency, theme, mcp)
+      await fsp.writeFile(
+        path.join(globalConfigDir, "opencode.json"),
+        JSON.stringify({
+          model: "global/model-x",
+          variant: "low",
+          concurrency: 2,
+          theme: "dark-theme",
+          agent: {
+            "ticket-worker": {
+              model: "global/worker-model",
+              variant: "low",
+            },
+          },
+          mcp: {
+            servers: {
+              shared_service: {
+                command: "global-cmd",
+                args: ["--global"],
+              },
+              global_only_service: {
+                command: "global-only-cmd",
+              },
+            },
+          },
+        }, null, 2),
+        "utf-8"
+      );
+
+      // Project defines conflicting setting X
+      await fsp.writeFile(
+        path.join(workspaceDir, "opencode.json"),
+        JSON.stringify({
+          model: "project/model-x",
+          variant: "max",
+          concurrency: 16,
+          theme: "light-theme",
+          agent: {
+            "ticket-worker": {
+              model: "project/worker-model",
+              variant: "high",
+            },
+          },
+          mcp: {
+            servers: {
+              shared_service: {
+                command: "project-cmd",
+                args: ["--project"],
+              },
+            },
+          },
+        }, null, 2),
+        "utf-8"
+      );
+
+      const adapter = new OpenCodeAdapter();
+      const { config: effective } = adapter.getEffectiveConfig(workspaceDir);
+
+      // 1. Primitive fields MUST be project value, NOT global value or union
+      expect(effective.model).toBe("project/model-x");
+      expect(effective.variant).toBe("max");
+      expect(effective.concurrency).toBe(16);
+      expect(effective.theme).toBe("light-theme");
+
+      // 2. Agent subagent definitions MUST be project value
+      expect(effective.agent["ticket-worker"]).toEqual({
+        model: "project/worker-model",
+        variant: "high",
+      });
+
+      // 3. MCP server matching the same name MUST be overridden by project value
+      expect(effective.mcp.servers.shared_service).toEqual({
+        command: "project-cmd",
+        args: ["--project"],
+      });
+      // Non-conflicting global MCP server is retained
+      expect(effective.mcp.servers.global_only_service).toEqual({
+        command: "global-only-cmd",
+      });
+    });
   });
 
   describe("Mutation Target Isolation & Comment Preservation (§31)", () => {
@@ -387,6 +469,24 @@ describe("OpenCode Native Adapter Hardening Tests (§29, §30, §31, §32, §75)
       expect(validation.errors).toBeDefined();
       expect(validation.errors?.some((e) => e.includes("model mismatch"))).toBe(true);
       expect(validation.errors?.some((e) => e.includes("variant mismatch"))).toBe(true);
+    });
+  });
+
+  describe("Scope Fidelity (§13, §66)", () => {
+    it("strictly isolates project target from user/global target during companion preview", async () => {
+      const adapter = new OpenCodeAdapter();
+
+      // Project scope preview must target workspace
+      const projPreview = await adapter.previewCompanionRegistration(workspaceDir, "project");
+      expect(projPreview.scope).toBe("project");
+      expect(projPreview.target_file).toBe(path.join(workspaceDir, "opencode.json"));
+      expect(projPreview.mutation_targets).toEqual([path.join(workspaceDir, "opencode.json")]);
+
+      // User/global scope preview must target globalConfigDir, NOT workspace
+      const globalPreview = await adapter.previewCompanionRegistration(workspaceDir, "global");
+      expect(globalPreview.scope).toBe("global");
+      expect(globalPreview.target_file).toBe(path.join(globalConfigDir, "opencode.json"));
+      expect(globalPreview.mutation_targets).toEqual([path.join(globalConfigDir, "opencode.json")]);
     });
   });
 });

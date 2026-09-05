@@ -277,6 +277,29 @@ describe("Claude Code Native Adapter Tests (§27, §28)", () => {
       const validation = await adapter.validateCompanionRegistration(workspaceDir);
       expect(validation.valid).toBe(true);
     });
+
+    it("detects companion registration in root .mcp.json per official Claude Code CLI", async () => {
+      const dotMcpPath = path.join(workspaceDir, ".mcp.json");
+      await fsp.writeFile(
+        dotMcpPath,
+        JSON.stringify({
+          mcpServers: {
+            "agent-config": {
+              type: "stdio",
+              command: "agent-config",
+              args: ["serve"],
+            },
+          },
+        }, null, 2),
+        "utf-8"
+      );
+
+      const adapter = new ClaudeCodeAdapter();
+      const status = await adapter.inspectCompanionRegistration(workspaceDir);
+      expect(status.registered).toBe(true);
+      expect(status.target_file).toBe(dotMcpPath);
+      expect(status.scope).toBe("project");
+    });
   });
 
   describe("Configuration Preview, Apply, and Drift Validation", () => {

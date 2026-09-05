@@ -12,15 +12,11 @@ export * from "./adapters/generic/index.js";
 export * from "./adapters/codex/index.js";
 export * from "./adapters/opencode/index.js";
 export * from "./adapters/claude-code/index.js";
-export * from "./adapters/copilot-cli/index.js";
 export * from "./adapters/gemini-cli/index.js";
 export * from "./adapters/cursor/index.js";
-export * from "./adapters/kiro/index.js";
-export * from "./adapters/zed/index.js";
 export * from "./adapters/dsh/index.js";
 export * from "./adapters/grok-build/index.js";
-export * from "./adapters/amp/index.js";
-export * from "./adapters/windsurf/index.js";
-export * from "./adapters/cline/index.js";
-export * from "./adapters/roo-code/index.js";
+export * from "./adapters/zcode/index.js";
+export * from "./adapters/hermes/index.js";
 export * from "./setup/index.js";
+

@@ -162,7 +162,7 @@ export class ClaudeCodeAdapter implements HostAdapter {
       };
     }
 
-    if (normalized.startsWith("0.") || normalized.startsWith("1.")) {
+    if (normalized.startsWith("0.") || normalized.startsWith("1.") || normalized.startsWith("2.")) {
       return {
         version: normalized,
         compatibility: "supported",
@@ -171,7 +171,7 @@ export class ClaudeCodeAdapter implements HostAdapter {
       };
     }
 
-    if (normalized.startsWith("2.")) {
+    if (normalized.startsWith("3.")) {
       return {
         version: normalized,
         compatibility: "partially-supported",
@@ -490,6 +490,7 @@ export class ClaudeCodeAdapter implements HostAdapter {
 
     // Check project-level MCP files
     const projectMcpFiles = [
+      path.join(workspace, ".mcp.json"),
       path.join(workspace, ".claude", "mcp.json"),
       path.join(workspace, ".claude.json"),
       path.join(workspace, ".claude", "settings.json"),
@@ -568,11 +569,11 @@ export class ClaudeCodeAdapter implements HostAdapter {
     scope?: "project" | "global" | "user"
   ): Promise<CompanionRegistrationPreview> {
     const workspace = workspaceRoot || process.cwd();
-    const targetFile = this.determineMcpRegistrationPath(workspace);
     const resolvedScope: "project" | "global" =
       scope === "global" || scope === "user" || (!scope && !workspaceRoot)
         ? "global"
         : "project";
+    const targetFile = this.determineMcpRegistrationPath(workspace, scope);
 
     let existingContent: string | null = null;
     let initialText = "{\n  \"mcpServers\": {}\n}\n";
@@ -629,9 +630,10 @@ export class ClaudeCodeAdapter implements HostAdapter {
 
   async applyCompanionRegistration(
     previewHash: string,
-    workspaceRoot?: string
+    workspaceRoot?: string,
+    providedPreview?: CompanionRegistrationPreview
   ): Promise<ApplyResult> {
-    const preview = await this.previewCompanionRegistration(workspaceRoot);
+    const preview = providedPreview || (await this.previewCompanionRegistration(workspaceRoot));
     if (!preview.supported || !preview.files || preview.files.length === 0) {
       return {
         success: false,
@@ -969,9 +971,18 @@ export class ClaudeCodeAdapter implements HostAdapter {
     return settingsPath;
   }
 
-  determineMcpRegistrationPath(workspace: string): string {
+  determineMcpRegistrationPath(workspace: string, scope?: "project" | "global" | "user"): string {
+    if (scope === "global" || scope === "user" || !workspace) {
+      const userDotMcp = path.join(os.homedir(), ".claude.json");
+      const globalMcp = path.join(this.getGlobalClaudeDir(), "mcp.json");
+      if (fs.existsSync(userDotMcp)) return userDotMcp;
+      if (fs.existsSync(globalMcp)) return globalMcp;
+      return path.join(this.getGlobalClaudeDir(), "mcp.json");
+    }
+    const dotMcp = path.join(workspace, ".mcp.json");
     const claudeMcp = path.join(workspace, ".claude", "mcp.json");
     const claudeJson = path.join(workspace, ".claude.json");
+    if (fs.existsSync(dotMcp)) return dotMcp;
     if (fs.existsSync(claudeMcp)) return claudeMcp;
     if (fs.existsSync(claudeJson)) return claudeJson;
     return claudeMcp;

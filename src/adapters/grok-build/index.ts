@@ -546,6 +546,7 @@ export class GrokBuildAdapter implements HostAdapter {
       const ids: string[] = [];
       if (typeof cfg.model === "string") ids.push(cfg.model);
       if (typeof cfg.worker_model === "string") ids.push(cfg.worker_model);
+      if (cfg.models && typeof cfg.models.default === "string") ids.push(cfg.models.default);
       if (Array.isArray(cfg.models)) {
         for (const item of cfg.models) {
           if (typeof item === "string") ids.push(item);
@@ -816,9 +817,10 @@ export class GrokBuildAdapter implements HostAdapter {
    */
   async applyCompanionRegistration(
     previewHash: string,
-    workspaceRoot?: string
+    workspaceRoot?: string,
+    providedPreview?: CompanionRegistrationPreview
   ): Promise<ApplyResult> {
-    const preview = await this.previewCompanionRegistration(workspaceRoot);
+    const preview = providedPreview || (await this.previewCompanionRegistration(workspaceRoot));
     if (!preview.supported || !preview.files || preview.files.length === 0) {
       return {
         success: false,
@@ -838,9 +840,14 @@ export class GrokBuildAdapter implements HostAdapter {
     }
 
     // Evaluate native `grok mcp add` command priority (§47)
+    const isProjectScope = preview.scope === "project";
+    const mcpCliArgs = isProjectScope && workspaceRoot
+      ? ["mcp", "add", "--scope", "project", "agent-config", "--", "agent-config", "serve"]
+      : ["mcp", "add", "--scope", "user", "agent-config", "--", "agent-config", "serve"];
+
     const nativeCliResult = await this.runCliCommand(
       "grok",
-      ["mcp", "add", "agent-config", "agent-config", "serve"],
+      mcpCliArgs,
       workspaceRoot
     );
     if (nativeCliResult && nativeCliResult.exitCode === 0) {
@@ -848,7 +855,7 @@ export class GrokBuildAdapter implements HostAdapter {
         success: true,
         preview_id: preview.preview_id || previewHash,
         applied_targets: preview.mutation_targets,
-        message: "Successfully registered companion MCP server via 'grok mcp add'.",
+        message: `Successfully registered companion MCP server via 'grok mcp add --scope ${isProjectScope ? "project" : "user"}'.`,
       };
     }
 
@@ -952,10 +959,7 @@ export class GrokBuildAdapter implements HostAdapter {
     }
 
     let newConfigContent = existingContent || "";
-    newConfigContent = this.updateTomlKeyValue(newConfigContent, "model", targetModel);
-    if (targetEffort) {
-      newConfigContent = this.updateTomlKeyValue(newConfigContent, "reasoning_effort", targetEffort);
-    }
+    newConfigContent = this.updateTomlModelAndEffort(newConfigContent, targetModel, targetEffort);
 
     const files: RenderedFile[] = [
       {
@@ -1082,7 +1086,11 @@ export class GrokBuildAdapter implements HostAdapter {
     const runtimeInspect = await this.runGrokInspect(workspaceRoot);
     const layered = this.readLayeredConfig(workspaceRoot);
 
-    const actualModel = runtimeInspect?.model || layered.effectiveConfig.model;
+    const actualModel =
+      runtimeInspect?.model ||
+      (layered.effectiveConfig.models && typeof layered.effectiveConfig.models.default === "string"
+        ? layered.effectiveConfig.models.default
+        : layered.effectiveConfig.model);
     const actualEffort = runtimeInspect?.reasoning_effort || layered.effectiveConfig.reasoning_effort;
 
     if (expectedModel && actualModel !== expectedModel) {
@@ -1312,6 +1320,41 @@ export class GrokBuildAdapter implements HostAdapter {
     return target;
   }
 
+  private updateTomlModelAndEffort(
+    content: string,
+    model: string,
+    effort?: string
+  ): string {
+    let res = content;
+    // Check if [models] table exists
+    const hasModelsTable = /^\s*\[models\]\s*$/m.test(res);
+    if (hasModelsTable) {
+      // In [models] table, update or insert default = "model"
+      const defaultRegex = /^(\s*\[models\][\s\S]*?^\s*default\s*=\s*).*$/m;
+      if (defaultRegex.test(res)) {
+        res = res.replace(
+          /^(\s*\[models\][\s\S]*?)(^\s*default\s*=\s*).*$/m,
+          `$1default = "${model.replace(/"/g, '\\"')}"`
+        );
+      } else {
+        res = res.replace(
+          /^(\s*\[models\]\s*$)/m,
+          `$1\ndefault = "${model.replace(/"/g, '\\"')}"`
+        );
+      }
+    } else if (/^\s*default\s*=/m.test(res) && !/^\s*model\s*=/m.test(res)) {
+      res = this.updateTomlKeyValue(res, "default", model);
+    } else {
+      res = this.updateTomlKeyValue(res, "model", model);
+    }
+
+    if (effort) {
+      res = this.updateTomlKeyValue(res, "reasoning_effort", effort);
+    }
+
+    return res;
+  }
+
   private resolveConfigPath(workspaceRoot?: string, scope?: "project" | "user"): string | null {
     if (scope === "user") {
       const grokHome = process.env.GROK_HOME || path.join(os.homedir(), ".grok");
@@ -1349,18 +1392,18 @@ export class GrokBuildAdapter implements HostAdapter {
     command: string,
     args: string[]
   ): string {
-    const argsToml = `[${args.map((a) => `"${a.replace(/"/g, '\\"')}"`).join(", ")}]`;
+    const argsToml = `[\n    ${args.map((a) => `"${a.replace(/"/g, '\\"')}"`).join(",\n    ")},\n]`;
     const serverHeaderRegex = new RegExp(
-      `\\[mcp\\.(?:servers|servers\\.${name})\\]|\\[mcp_servers\\.${name}\\]`,
+      `\\[mcp_servers\\.${name}\\]|\\[mcp\\.(?:servers|servers\\.${name})\\]`,
       "m"
     );
 
-    if (content.includes(`[mcp.servers.${name}]`)) {
+    if (content.includes(`[mcp_servers.${name}]`) || content.includes(`[mcp.servers.${name}]`)) {
       return content;
     }
 
     const trimmed = content.trim();
-    const serverBlock = `[mcp.servers.${name}]\ncommand = "${command}"\nargs = ${argsToml}\n`;
+    const serverBlock = `[mcp_servers.${name}]\ncommand = "${command}"\nargs = ${argsToml}\n`;
 
     if (serverHeaderRegex.test(content)) {
       return `${trimmed}\n\n${serverBlock}`;

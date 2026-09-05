@@ -531,10 +531,13 @@ export class OpenCodeAdapter implements HostAdapter {
 
   async previewCompanionRegistration(
     workspaceRoot?: string,
-    scope?: "project" | "global"
+    scope?: "project" | "global" | "user"
   ): Promise<CompanionRegistrationPreview> {
     const workspace = workspaceRoot || process.cwd();
-    const resolvedScope = (scope || (workspaceRoot ? "project" : "global")) as "project" | "global";
+    const resolvedScope: "project" | "global" =
+      scope === "global" || scope === "user" || (!scope && !workspaceRoot)
+        ? "global"
+        : "project";
     const targetFile = this.determineTargetConfigPath(
       workspace,
       resolvedScope
@@ -595,9 +598,10 @@ export class OpenCodeAdapter implements HostAdapter {
 
   async applyCompanionRegistration(
     previewHash: string,
-    workspaceRoot?: string
+    workspaceRoot?: string,
+    providedPreview?: CompanionRegistrationPreview
   ): Promise<ApplyResult> {
-    const preview = await this.previewCompanionRegistration(workspaceRoot);
+    const preview = providedPreview || (await this.previewCompanionRegistration(workspaceRoot));
     if (!preview.supported || !preview.files || preview.files.length === 0) {
       return {
         success: false,

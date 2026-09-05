@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "host_id": "hermes",
+  "fingerprint": "stale-fp-012",
+  "generated_at": "2024-01-01T00:00:00.000Z",
+  "single_model": {
+    "model": "hermes-nonexistent-model"
+  }
+}
