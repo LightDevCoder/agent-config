@@ -4,7 +4,23 @@ import fsp from "node:fs/promises";
 import crypto from "node:crypto";
 import { HostAdapter, CompanionRegistrationStatus, CompanionRegistrationPreview, ValidationResult } from "../adapters/contract.js";
 import { AdapterRegistry, defaultAdapterRegistry } from "../adapters/registry.js";
-import { FrozenMutationPreview, MutationOperation } from "../contracts/index.js";
+import {
+  FrozenMutationPreview,
+  MutationOperation,
+  CANONICAL_TOOL_CONTRACTS,
+  evaluateCompanionHealth,
+  CompanionToolDefinition,
+  CompanionHealthCheckParams,
+  CompanionHealthCheckResult,
+} from "../contracts/index.js";
+
+export {
+  CANONICAL_TOOL_CONTRACTS,
+  evaluateCompanionHealth,
+  CompanionToolDefinition,
+  CompanionHealthCheckParams,
+  CompanionHealthCheckResult,
+};
 
 /**
  * Inspection details for companion setup (§14, §15, §19).
@@ -88,6 +104,16 @@ export interface CompanionSetupValidationResult {
   message: string;
   details?: unknown;
   errors?: string[];
+  health?: CompanionHealthCheckResult;
+}
+
+export interface CompanionSetupValidationOptions {
+  workspace?: string;
+  host_id?: string;
+  scope?: "project" | "global" | "user";
+  registry?: AdapterRegistry;
+  protocol_version?: number;
+  tools?: CompanionToolDefinition[] | Record<string, CompanionToolDefinition>;
 }
 
 export interface CompanionSetupLifecycleOptions {
@@ -424,12 +450,9 @@ export async function applyCompanionSetup(
 /**
  * Validate effective host state, MCP reachability, and semantic configuration (§14, §73, §76).
  */
-export async function validateCompanionSetup(options?: {
-  workspace?: string;
-  host_id?: string;
-  scope?: "project" | "global" | "user";
-  registry?: AdapterRegistry;
-}): Promise<CompanionSetupValidationResult> {
+export async function validateCompanionSetup(
+  options?: CompanionSetupValidationOptions
+): Promise<CompanionSetupValidationResult> {
   const { adapter, workspaceDir } = await resolveSetupAdapter(
     options?.workspace,
     options?.host_id,
@@ -510,6 +533,20 @@ export async function validateCompanionSetup(options?: {
     }
   }
 
+  // Evaluate companion health strictly if tools or protocol options are supplied
+  let healthResult: CompanionHealthCheckResult | undefined;
+  if (options?.tools !== undefined || options?.protocol_version !== undefined) {
+    healthResult = evaluateCompanionHealth({
+      protocol_version: options?.protocol_version ?? 1,
+      tools: options?.tools || [],
+      reachable: isReachable,
+    });
+    if (!healthResult.healthy) {
+      isHealthy = false;
+      errors.push(...healthResult.reasons, ...healthResult.schema_errors);
+    }
+  }
+
   mcpReachable = isReachable;
 
   const isValid = adapterValidation.valid && isRegistered && isConfigured && errors.length === 0;
@@ -538,6 +575,7 @@ export async function validateCompanionSetup(options?: {
       errors,
     },
     errors: errors.length > 0 ? errors : undefined,
+    health: healthResult,
   };
 }
 

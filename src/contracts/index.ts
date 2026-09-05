@@ -532,3 +532,208 @@ export const CANONICAL_TOOL_CONTRACTS: Record<ToolName, CanonicalToolContract> =
     ],
   },
 };
+
+// ============================================================================
+// Companion Health Semantics & Evaluation
+// ============================================================================
+
+export interface CompanionToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, any>;
+  parameters?: Record<string, any>;
+  requiredParameters?: string[];
+  outputSchema?: Record<string, any>;
+  responseProperties?: Record<string, any>;
+  requiredResponseProperties?: string[];
+}
+
+export interface CompanionHealthCheckParams {
+  protocol_version?: number;
+  tools?: CompanionToolDefinition[] | Record<string, CompanionToolDefinition>;
+  reachable?: boolean;
+}
+
+export interface CompanionHealthCheckResult {
+  healthy: boolean;
+  status: "ready" | "stale" | "unsupported";
+  protocol_version: number;
+  missing_tools: string[];
+  schema_errors: string[];
+  reasons: string[];
+}
+
+/**
+ * Strict Companion Health Evaluation:
+ * - protocol_version === 1
+ * - All 8 canonical tools present
+ * - Tool input/output schemas match CANONICAL_TOOL_CONTRACTS
+ * - Missing tools or schema mismatch marks status as 'stale' or 'unsupported', never 'ready'/'healthy'.
+ */
+export function evaluateCompanionHealth(
+  params: CompanionHealthCheckParams
+): CompanionHealthCheckResult {
+  const protocolVersion = params.protocol_version ?? 0;
+  const missingTools: string[] = [];
+  const schemaErrors: string[] = [];
+  const reasons: string[] = [];
+
+  // 1. Protocol version check
+  if (protocolVersion !== PROTOCOL_VERSION) {
+    reasons.push(
+      `Protocol version mismatch: expected ${PROTOCOL_VERSION}, got ${protocolVersion}`
+    );
+  }
+
+  // 2. Reachability check
+  if (params.reachable === false) {
+    reasons.push("Companion process is unreachable or unresponsive");
+  }
+
+  // Normalize tools map
+  const toolMap = new Map<string, CompanionToolDefinition>();
+  if (Array.isArray(params.tools)) {
+    for (const t of params.tools) {
+      if (t && typeof t.name === "string") {
+        toolMap.set(t.name, t);
+      }
+    }
+  } else if (params.tools && typeof params.tools === "object") {
+    for (const [key, val] of Object.entries(params.tools)) {
+      if (val) {
+        toolMap.set(val.name || key, val);
+      }
+    }
+  }
+
+  // 3. Verify all 8 canonical tools are present
+  for (const toolName of TOOL_NAMES) {
+    const tool = toolMap.get(toolName);
+    if (!tool) {
+      missingTools.push(toolName);
+      continue;
+    }
+
+    // 4. Schema verification against CANONICAL_TOOL_CONTRACTS
+    const canonical = CANONICAL_TOOL_CONTRACTS[toolName];
+    if (!canonical) continue;
+
+    // A. Input parameters schema validation
+    const inputProps =
+      tool.parameters ||
+      (tool.inputSchema && typeof tool.inputSchema === "object"
+        ? (tool.inputSchema as any).properties || tool.inputSchema
+        : undefined);
+
+    const requiredParams: string[] =
+      tool.requiredParameters ||
+      (tool.inputSchema && Array.isArray((tool.inputSchema as any).required)
+        ? (tool.inputSchema as any).required
+        : []);
+
+    // Check canonical required parameters
+    for (const reqParam of canonical.requiredParameters) {
+      const hasInProps = inputProps && reqParam in inputProps;
+      const hasInRequired = requiredParams.includes(reqParam);
+      if (!hasInProps && !hasInRequired) {
+        schemaErrors.push(
+          `Tool '${toolName}' is missing required parameter '${reqParam}'`
+        );
+      }
+    }
+
+    // Check parameter types if provided
+    if (inputProps && typeof inputProps === "object") {
+      for (const [pName, pSpec] of Object.entries(canonical.parameters)) {
+        const toolParam = inputProps[pName];
+        if (toolParam && typeof toolParam === "object") {
+          const toolType = (toolParam as any).type;
+          if (toolType && typeof toolType === "string") {
+            const normalizedToolType = toolType.toLowerCase();
+            const normalizedCanonicalType = pSpec.type.toLowerCase();
+            if (
+              normalizedToolType !== normalizedCanonicalType &&
+              !(normalizedCanonicalType === "object" && normalizedToolType === "record")
+            ) {
+              schemaErrors.push(
+                `Tool '${toolName}' parameter '${pName}' has incompatible type: expected '${pSpec.type}', got '${toolType}'`
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // B. Response properties schema validation
+    const responseProps =
+      tool.responseProperties ||
+      (tool.outputSchema && typeof tool.outputSchema === "object"
+        ? (tool.outputSchema as any).properties || tool.outputSchema
+        : undefined);
+
+    const requiredRespProps: string[] =
+      tool.requiredResponseProperties ||
+      (tool.outputSchema && Array.isArray((tool.outputSchema as any).required)
+        ? (tool.outputSchema as any).required
+        : []);
+
+    if (responseProps && typeof responseProps === "object") {
+      for (const reqProp of canonical.requiredResponseProperties) {
+        const hasInProps = reqProp in responseProps;
+        const hasInRequired = requiredRespProps.includes(reqProp);
+        if (!hasInProps && !hasInRequired) {
+          schemaErrors.push(
+            `Tool '${toolName}' is missing required response property '${reqProp}'`
+          );
+        }
+      }
+
+      for (const [propName, propSpec] of Object.entries(canonical.responseProperties)) {
+        const toolProp = responseProps[propName];
+        if (toolProp && typeof toolProp === "object") {
+          const toolType = (toolProp as any).type;
+          if (toolType && typeof toolType === "string") {
+            const normalizedToolType = toolType.toLowerCase();
+            const normalizedCanonicalType = propSpec.type.toLowerCase();
+            if (normalizedToolType !== normalizedCanonicalType) {
+              schemaErrors.push(
+                `Tool '${toolName}' response property '${propName}' has incompatible type: expected '${propSpec.type}', got '${toolType}'`
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (missingTools.length > 0) {
+    reasons.push(`Missing canonical tools: ${missingTools.join(", ")}`);
+  }
+  if (schemaErrors.length > 0) {
+    reasons.push(`Tool schema mismatches: ${schemaErrors.length} errors found`);
+  }
+
+  const healthy =
+    reasons.length === 0 && missingTools.length === 0 && schemaErrors.length === 0 && params.reachable !== false;
+
+  let status: "ready" | "stale" | "unsupported";
+  if (healthy) {
+    status = "ready";
+  } else if (protocolVersion !== PROTOCOL_VERSION) {
+    status = "unsupported";
+  } else if (missingTools.length > 0 || schemaErrors.length > 0) {
+    status = "stale";
+  } else {
+    status = "unsupported";
+  }
+
+  return {
+    healthy,
+    status,
+    protocol_version: protocolVersion,
+    missing_tools: missingTools,
+    schema_errors: schemaErrors,
+    reasons,
+  };
+}
+
