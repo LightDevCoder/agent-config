@@ -13,6 +13,8 @@ import {
   CompanionToolDefinition,
   CompanionHealthCheckParams,
   CompanionHealthCheckResult,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  LATEST_PROTOCOL_VERSION,
 } from "../contracts/index.js";
 
 export {
@@ -21,6 +23,8 @@ export {
   CompanionToolDefinition,
   CompanionHealthCheckParams,
   CompanionHealthCheckResult,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  LATEST_PROTOCOL_VERSION,
 };
 
 /**
@@ -117,6 +121,7 @@ export interface CompanionSetupValidationOptions {
   scope?: "project" | "global" | "user";
   registry?: AdapterRegistry;
   protocol_version?: number;
+  mcp_protocol_version?: string;
   tools?: CompanionToolDefinition[] | Record<string, CompanionToolDefinition>;
   reachable?: boolean;
 }
@@ -128,6 +133,7 @@ export interface CompanionSetupLifecycleOptions {
   explicit_approval?: boolean;
   registry?: AdapterRegistry;
   protocol_version?: number;
+  mcp_protocol_version?: string;
   tools?: CompanionToolDefinition[] | Record<string, CompanionToolDefinition>;
   reachable?: boolean;
 }
@@ -491,6 +497,8 @@ async function probeCompanionMcp(
   timeoutMs: number = 3000
 ): Promise<{
   reachable: boolean;
+  mcp_protocol_version?: string;
+  mcp_transport_error?: string;
   protocol_version?: number;
   tools?: CompanionToolDefinition[];
 }> {
@@ -498,9 +506,13 @@ async function probeCompanionMcp(
     let resolved = false;
     let proc: any;
     let probedToolsList: CompanionToolDefinition[] | undefined;
+    let probedMcpProtocol: string | undefined;
+    let probedMcpTransportError: string | undefined;
 
     const finish = (result: {
       reachable: boolean;
+      mcp_protocol_version?: string;
+      mcp_transport_error?: string;
       protocol_version?: number;
       tools?: CompanionToolDefinition[];
     }) => {
@@ -551,8 +563,38 @@ async function probeCompanionMcp(
         if (!line.trim()) continue;
         try {
           const msg = JSON.parse(line.trim());
-          if (msg.id === 1 && msg.result) {
-            // Handshake completed: send initialized notification and request tools list
+          if (msg.id === 1) {
+            let mcpTransportErr: string | undefined;
+            if (msg.error) {
+              mcpTransportErr = `MCP transport protocol mismatch: initialize error ${msg.error.message || JSON.stringify(msg.error)}`;
+            } else if (!msg.result) {
+              mcpTransportErr = "missing MCP transport initialize result";
+            } else {
+              const rawTransportVersion = msg.result.protocolVersion;
+              // Check missing protocolVersion (SPEC §6)
+              if (rawTransportVersion === undefined) {
+                mcpTransportErr = "missing MCP transport protocolVersion";
+              } else if (
+                typeof rawTransportVersion !== "string" ||
+                !rawTransportVersion.trim()
+              ) {
+                // Check invalid protocolVersion (SPEC §7: null, number, empty string, malformed value)
+                probedMcpProtocol = rawTransportVersion === null ? "null" : String(rawTransportVersion);
+                mcpTransportErr = `MCP transport protocol mismatch: expected supported ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}, received ${rawTransportVersion === null ? "null" : typeof rawTransportVersion === "number" ? rawTransportVersion : JSON.stringify(rawTransportVersion)}`;
+              } else {
+                probedMcpProtocol = rawTransportVersion.trim();
+                // Check unsupported protocolVersion (SPEC §5)
+                if (!SUPPORTED_PROTOCOL_VERSIONS.includes(probedMcpProtocol)) {
+                  mcpTransportErr = `MCP transport protocol mismatch: expected supported ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}, received ${probedMcpProtocol}`;
+                }
+              }
+            }
+
+            if (mcpTransportErr) {
+              probedMcpTransportError = mcpTransportErr;
+            }
+
+            // Continue to read tools and get_setup_status for full diagnostics (SPEC §5, §9, §13)
             const initNotice =
               JSON.stringify({
                 jsonrpc: "2.0",
@@ -570,12 +612,18 @@ async function probeCompanionMcp(
               proc.stdin.write(initNotice);
               proc.stdin.write(listReq);
             } catch {
-              finish({ reachable: false });
+              finish({
+                reachable: true,
+                mcp_protocol_version: probedMcpProtocol,
+                mcp_transport_error: probedMcpTransportError,
+              });
             }
           } else if (msg.id === 2) {
             if (msg.error) {
               finish({
                 reachable: true,
+                mcp_protocol_version: probedMcpProtocol,
+                mcp_transport_error: probedMcpTransportError,
                 protocol_version: undefined,
                 tools: [],
               });
@@ -595,6 +643,8 @@ async function probeCompanionMcp(
               // Missing get_setup_status: cannot probe contract version
               finish({
                 reachable: true,
+                mcp_protocol_version: probedMcpProtocol,
+                mcp_transport_error: probedMcpTransportError,
                 protocol_version: undefined,
                 tools,
               });
@@ -617,6 +667,8 @@ async function probeCompanionMcp(
             } catch {
               finish({
                 reachable: true,
+                mcp_protocol_version: probedMcpProtocol,
+                mcp_transport_error: probedMcpTransportError,
                 protocol_version: undefined,
                 tools,
               });
@@ -646,6 +698,8 @@ async function probeCompanionMcp(
             }
             finish({
               reachable: true,
+              mcp_protocol_version: probedMcpProtocol,
+              mcp_transport_error: probedMcpTransportError,
               protocol_version: probedProtocol,
               tools: probedToolsList,
             });
@@ -663,7 +717,7 @@ async function probeCompanionMcp(
         id: 1,
         method: "initialize",
         params: {
-          protocolVersion: "2024-11-05",
+          protocolVersion: LATEST_PROTOCOL_VERSION,
           capabilities: {},
           clientInfo: { name: "agent-config-health-checker", version: "0.1.0" },
         },
@@ -738,6 +792,8 @@ export async function validateCompanionSetup(
   let isHealthy = false;
   let probedTools: CompanionToolDefinition[] | undefined;
   let probedProtocol: number | undefined;
+  let probedMcpProtocol: string | undefined;
+  let probedMcpTransportError: string | undefined;
 
   if (options?.reachable !== undefined) {
     isReachable = options.reachable;
@@ -760,6 +816,12 @@ export async function validateCompanionSetup(
           inspection.args || ["serve"]
         );
         isReachable = probe.reachable;
+        if (probe.mcp_protocol_version !== undefined) {
+          probedMcpProtocol = probe.mcp_protocol_version;
+        }
+        if (probe.mcp_transport_error !== undefined) {
+          probedMcpTransportError = probe.mcp_transport_error;
+        }
         if (probe.tools) {
           probedTools = probe.tools;
         }
@@ -781,20 +843,27 @@ export async function validateCompanionSetup(
       : options?.tools !== undefined
         ? 1
         : (probedProtocol ?? 0);
+  const mcpProtocolToEvaluate =
+    options?.mcp_protocol_version !== undefined
+      ? options.mcp_protocol_version
+      : probedMcpProtocol;
 
   const healthResult = evaluateCompanionHealth({
     protocol_version: protocolToEvaluate,
+    mcp_protocol_version: mcpProtocolToEvaluate,
+    mcp_transport_error: probedMcpTransportError,
     tools: toolsToEvaluate,
     reachable: isReachable,
   });
 
   isHealthy = healthResult.healthy;
 
-  // If explicit tools, protocol, or reachable options were supplied, health failures invalidate the validation result
+  // If explicit tools, protocol, reachable, or mcp_protocol_version options were supplied, health failures invalidate the validation result
   if (
     options?.tools !== undefined ||
     options?.protocol_version !== undefined ||
-    options?.reachable !== undefined
+    options?.reachable !== undefined ||
+    options?.mcp_protocol_version !== undefined
   ) {
     if (!healthResult.healthy) {
       errors.push(...healthResult.reasons, ...healthResult.schema_errors);

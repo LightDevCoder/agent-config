@@ -102,7 +102,7 @@ The companion provides a standalone CLI runner for safe host registration and he
 - `agent-config setup --check`: Executes a live MCP protocol and contract probe.
   - **Exit semantics:** Exits with code `0` only when the Companion is healthy and ready; exits non-zero (`1`) if unregistered, unreachable, or unhealthy.
   - **Strict state separation:** Distinguishes `Registered`, `Configured`, `Reachable`, and `Healthy` (`registration != reachability != health`).
-  - **Canonical health definition:** Requires syntactically valid registration, live process reachability, exact contract version match (`protocol_version === 1`), and all 8 canonical tools with compatible input and output schemas.
+  - **Canonical health definition:** Requires syntactically valid registration, live process reachability, compatible MCP transport protocol, exact Agent Config Companion contract version match (`protocol_version === 1`), and all 8 canonical tools with compatible input and output schemas.
 - `agent-config setup --preview`: Read-only inspection generating a unified diff and mutation ownership block.
 - `agent-config setup --apply --yes`: Atomically applies host configuration mutations. Requires explicit approval (`--yes`). Full setup completion requires post-mutation health probe verification; registration mutation success alone does not mean setup completion.
 

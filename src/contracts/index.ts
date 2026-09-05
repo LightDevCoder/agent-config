@@ -19,6 +19,10 @@ import {
   createAgentConfigResult,
 } from "../profile/schema.js";
 import { HostCapabilities, CompanionRegistrationStatus } from "../adapters/contract.js";
+import {
+  SUPPORTED_PROTOCOL_VERSIONS,
+  LATEST_PROTOCOL_VERSION,
+} from "@modelcontextprotocol/sdk/types.js";
 
 export {
   Profile,
@@ -38,6 +42,8 @@ export {
   AgentConfigResult,
   AgentConfigResultSchema,
   createAgentConfigResult,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  LATEST_PROTOCOL_VERSION,
 };
 
 /**
@@ -621,6 +627,8 @@ export interface CompanionToolDefinition {
 
 export interface CompanionHealthCheckParams {
   protocol_version?: number;
+  mcp_protocol_version?: string;
+  mcp_transport_error?: string;
   tools?: CompanionToolDefinition[] | Record<string, CompanionToolDefinition>;
   reachable?: boolean;
 }
@@ -629,6 +637,7 @@ export interface CompanionHealthCheckResult {
   healthy: boolean;
   status: "ready" | "stale" | "unsupported";
   protocol_version: number;
+  mcp_protocol_version?: string;
   missing_tools: string[];
   schema_errors: string[];
   reasons: string[];
@@ -636,10 +645,11 @@ export interface CompanionHealthCheckResult {
 
 /**
  * Strict Companion Health Evaluation:
- * - protocol_version === 1
+ * - Compatible MCP transport protocol (supported by MCP SDK runtime)
+ * - Agent Config contract protocol_version === 1
  * - All 8 canonical tools present
  * - Tool input/output schemas match CANONICAL_TOOL_CONTRACTS
- * - Missing tools or schema mismatch marks status as 'stale' or 'unsupported', never 'ready'/'healthy'.
+ * - Missing tools, schema mismatch, or protocol mismatch marks status as 'stale' or 'unsupported', never 'ready'/'healthy'.
  */
 export function evaluateCompanionHealth(
   params: CompanionHealthCheckParams
@@ -649,14 +659,36 @@ export function evaluateCompanionHealth(
   const schemaErrors: string[] = [];
   const reasons: string[] = [];
 
-  // 1. Protocol version check
+  // 1. Agent Config protocol version check
   if (protocolVersion !== PROTOCOL_VERSION) {
     reasons.push(
       `Protocol version mismatch: expected ${PROTOCOL_VERSION}, got ${protocolVersion}`
     );
   }
 
-  // 2. Reachability check
+  // 2. MCP transport protocol compatibility check (SPEC §2, §5, §6, §7)
+  let mcpTransportIncompatible = false;
+  if (params.mcp_transport_error) {
+    mcpTransportIncompatible = true;
+    reasons.push(params.mcp_transport_error);
+  } else if (params.mcp_protocol_version !== undefined) {
+    if (
+      typeof params.mcp_protocol_version !== "string" ||
+      !params.mcp_protocol_version.trim()
+    ) {
+      mcpTransportIncompatible = true;
+      reasons.push(
+        `MCP transport protocol mismatch: expected supported ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}, received ${params.mcp_protocol_version === null ? "null" : typeof params.mcp_protocol_version === "number" ? params.mcp_protocol_version : JSON.stringify(params.mcp_protocol_version)}`
+      );
+    } else if (!SUPPORTED_PROTOCOL_VERSIONS.includes(params.mcp_protocol_version)) {
+      mcpTransportIncompatible = true;
+      reasons.push(
+        `MCP transport protocol mismatch: expected supported ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}, received ${params.mcp_protocol_version}`
+      );
+    }
+  }
+
+  // 3. Reachability check
   if (params.reachable === false) {
     reasons.push("Companion process is unreachable or unresponsive");
   }
@@ -832,12 +864,16 @@ export function evaluateCompanionHealth(
   }
 
   const healthy =
-    reasons.length === 0 && missingTools.length === 0 && schemaErrors.length === 0 && params.reachable !== false;
+    reasons.length === 0 &&
+    missingTools.length === 0 &&
+    schemaErrors.length === 0 &&
+    params.reachable !== false &&
+    !mcpTransportIncompatible;
 
   let status: "ready" | "stale" | "unsupported";
   if (healthy) {
     status = "ready";
-  } else if (protocolVersion !== PROTOCOL_VERSION) {
+  } else if (protocolVersion !== PROTOCOL_VERSION || mcpTransportIncompatible) {
     status = "unsupported";
   } else if (missingTools.length > 0 || schemaErrors.length > 0) {
     status = "stale";
@@ -849,6 +885,7 @@ export function evaluateCompanionHealth(
     healthy,
     status,
     protocol_version: protocolVersion,
+    mcp_protocol_version: params.mcp_protocol_version,
     missing_tools: missingTools,
     schema_errors: schemaErrors,
     reasons,

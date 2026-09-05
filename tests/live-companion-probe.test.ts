@@ -45,6 +45,76 @@ describe("Live Companion MCP Health Probe & Lifecycle Acceptance (SPEC §13, §1
   }
 
   // -------------------------------------------------------------------------
+  // Scenario: Wrong MCP transport protocol, valid Agent Config contract (SPEC §9 Scenario A)
+  // -------------------------------------------------------------------------
+  it("Scenario: live Companion advertises unsupported MCP transport protocolVersion -> registered: true, reachable: true, healthy: false, MCP transport mismatch diagnostic", async () => {
+    await registerFakeCompanion("unsupported-transport-protocol");
+
+    // Real production probe: spawns fake Companion process over stdio
+    const validation = await validateCompanionSetup({
+      workspace: workspaceDir,
+      host_id: "cursor",
+    });
+
+    expect(validation.registered).toBe(true);
+    expect(validation.reachable).toBe(true);
+    expect(validation.healthy).toBe(false);
+    expect(validation.health?.healthy).toBe(false);
+    expect(validation.health?.protocol_version).toBe(1);
+    expect(validation.health?.missing_tools).toHaveLength(0);
+    expect(validation.health?.schema_errors).toHaveLength(0);
+    expect(
+      validation.health?.reasons.some((r) =>
+        r.includes("MCP transport protocol mismatch")
+      )
+    ).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Scenario: Missing MCP transport protocolVersion in initialize result (SPEC §11)
+  // -------------------------------------------------------------------------
+  it("Scenario: live Companion initialize response lacks protocolVersion -> registered: true, reachable: true, healthy: false, missing diagnostic", async () => {
+    await registerFakeCompanion("missing-transport-protocol");
+
+    const validation = await validateCompanionSetup({
+      workspace: workspaceDir,
+      host_id: "cursor",
+    });
+
+    expect(validation.registered).toBe(true);
+    expect(validation.reachable).toBe(true);
+    expect(validation.healthy).toBe(false);
+    expect(validation.health?.healthy).toBe(false);
+    expect(
+      validation.health?.reasons.some((r) =>
+        r.includes("missing MCP transport protocolVersion")
+      )
+    ).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Scenario: Invalid MCP transport protocolVersion in initialize result (SPEC §7)
+  // -------------------------------------------------------------------------
+  it("Scenario: live Companion initialize response has invalid protocolVersion (null) -> registered: true, reachable: true, healthy: false", async () => {
+    await registerFakeCompanion("invalid-transport-protocol");
+
+    const validation = await validateCompanionSetup({
+      workspace: workspaceDir,
+      host_id: "cursor",
+    });
+
+    expect(validation.registered).toBe(true);
+    expect(validation.reachable).toBe(true);
+    expect(validation.healthy).toBe(false);
+    expect(validation.health?.healthy).toBe(false);
+    expect(
+      validation.health?.reasons.some((r) =>
+        r.includes("MCP transport protocol mismatch")
+      )
+    ).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
   // Scenario A: Wrong Agent Config contract version (SPEC §13 Scenario A)
   // -------------------------------------------------------------------------
   it("Scenario A: live Companion advertises protocol_version = 2 -> reachable: true, healthy: false, protocol mismatch diagnostic", async () => {
@@ -246,6 +316,32 @@ describe("Live Companion MCP Health Probe & Lifecycle Acceptance (SPEC §13, §1
 
     it("returns exit code 1 when registered but unhealthy (Scenario A)", async () => {
       await registerFakeCompanion("wrong-protocol");
+
+      const code = await runSetupCli([
+        "--workspace",
+        workspaceDir,
+        "--host",
+        "cursor",
+        "--check",
+      ]);
+      expect(code).toBe(1);
+    });
+
+    it("returns exit code 1 when registered with unsupported MCP transport protocol (SPEC §10)", async () => {
+      await registerFakeCompanion("unsupported-transport-protocol");
+
+      const code = await runSetupCli([
+        "--workspace",
+        workspaceDir,
+        "--host",
+        "cursor",
+        "--check",
+      ]);
+      expect(code).toBe(1);
+    });
+
+    it("returns exit code 1 when registered with missing MCP transport protocolVersion (SPEC §11)", async () => {
+      await registerFakeCompanion("missing-transport-protocol");
 
       const code = await runSetupCli([
         "--workspace",

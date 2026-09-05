@@ -35,8 +35,22 @@ function buildCanonicalTools() {
 
 let tools = buildCanonicalTools();
 let protocolVersion = 1;
+let mcpTransportProtocolVersion = "2024-11-05";
+let includeTransportProtocolVersion = true;
 
-if (scenario === "wrong-protocol") {
+if (scenario === "unsupported-transport-protocol") {
+  // Scenario: Wrong MCP transport protocol (SPEC §9 Scenario A)
+  mcpTransportProtocolVersion = "deliberately-unsupported-mcp-version";
+  protocolVersion = 1;
+} else if (scenario === "missing-transport-protocol") {
+  // Scenario: Missing MCP transport protocolVersion (SPEC §11)
+  includeTransportProtocolVersion = false;
+  protocolVersion = 1;
+} else if (scenario === "invalid-transport-protocol") {
+  // Scenario: Invalid MCP transport protocolVersion (SPEC §7)
+  mcpTransportProtocolVersion = null;
+  protocolVersion = 1;
+} else if (scenario === "wrong-protocol") {
   // Scenario A: Agent Config protocol_version = 2
   protocolVersion = 2;
 } else if (scenario === "missing-output-schema") {
@@ -85,14 +99,17 @@ rl.on("line", (line) => {
   try {
     const msg = JSON.parse(line.trim());
     if (msg.method === "initialize") {
+      const initResult = {
+        capabilities: { tools: {} },
+        serverInfo: { name: "fake-companion", version: "1.0.0" },
+      };
+      if (includeTransportProtocolVersion) {
+        initResult.protocolVersion = mcpTransportProtocolVersion;
+      }
       const resp = {
         jsonrpc: "2.0",
         id: msg.id,
-        result: {
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {} },
-          serverInfo: { name: "fake-companion", version: "1.0.0" },
-        },
+        result: initResult,
       };
       process.stdout.write(JSON.stringify(resp) + "\n");
     } else if (msg.method === "notifications/initialized") {
