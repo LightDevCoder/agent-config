@@ -1,32 +1,30 @@
 import path from "node:path";
-import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
-import { ConfigurationRenderResult } from "../../adapters/contract.js";
+import {
+  PreviewConfigurationInputSchema,
+  ExtendedPreviewResult,
+} from "../../contracts/index.js";
+import { ExecutionConfig, ExecutionConfigSchema } from "../../profile/schema.js";
+import { validateExecutionConfigAgainstJsonSchema } from "../../profile/validator.js";
 
-export const PreviewConfigurationInputSchema = {
-  config: z
-    .record(z.any())
-    .describe("Execution configuration or settings to render and preview"),
-  workspace: z
-    .string()
-    .optional()
-    .describe("Workspace directory path (defaults to current working directory)"),
-  host_id: z
-    .string()
-    .optional()
-    .describe("Host identifier (optional, auto-detected from adapter if omitted)"),
-};
-
-export interface ExtendedPreviewResult extends ConfigurationRenderResult {
-  preview_hash: string;
-  expires_at: string;
-}
+export { PreviewConfigurationInputSchema, ExtendedPreviewResult };
 
 export async function handlePreviewConfiguration(
   params: { config: unknown; workspace?: string; host_id?: string },
   context: ToolContext
 ): Promise<ExtendedPreviewResult> {
+  // Fail-closed validation against canonical JSON Schema
+  const jsonValidation = validateExecutionConfigAgainstJsonSchema(params.config);
+  if (!jsonValidation.valid) {
+    throw new Error(
+      `Execution config failed canonical schema validation:\n${jsonValidation.errors?.join("\n")}`
+    );
+  }
+
+  // Parse strictly with ExecutionConfigSchema (Zod) to ensure type safety
+  const validatedConfig: ExecutionConfig = ExecutionConfigSchema.parse(params.config);
+
   const workspace = path.resolve(params.workspace || process.cwd());
   const adapter = await context.adapterRegistry.resolveAdapter(
     workspace,
@@ -35,8 +33,18 @@ export async function handlePreviewConfiguration(
 
   const profile = await context.profileStore.getProfile(adapter.id, workspace);
 
-  const renderResult = await adapter.renderConfiguration(
-    params.config as any,
+  // Adapters are passed validatedConfig (strongly typed ExecutionConfig), never unchecked 'as any'
+  const renderFn = adapter.previewConfiguration
+    ? adapter.previewConfiguration.bind(adapter)
+    : adapter.renderConfiguration?.bind(adapter);
+  if (!renderFn) {
+    throw new Error(
+      `Adapter ${adapter.id} does not support previewConfiguration or renderConfiguration.`
+    );
+  }
+
+  const renderResult = await renderFn(
+    validatedConfig,
     profile || undefined,
     workspace
   );
@@ -45,13 +53,19 @@ export async function handlePreviewConfiguration(
   const stored = await context.previewManager.createPreview(
     workspace,
     renderResult,
-    params.config
+    validatedConfig
   );
 
   return {
     ...renderResult,
+    preview_id: stored.preview_id,
     preview_hash: stored.preview_hash,
+    diff: stored.diff,
     expires_at: stored.expires_at || "",
+    target: stored.target,
+    baseline_hash: stored.baseline_hash,
+    mutation_targets: stored.mutation_targets,
+    target_hashes: stored.target_hashes,
   };
 }
 

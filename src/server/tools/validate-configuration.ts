@@ -1,33 +1,12 @@
 import path from "node:path";
-import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
+import {
+  ValidateConfigurationInputSchema,
+  ValidateConfigurationResult,
+} from "../../contracts/index.js";
 
-export const ValidateConfigurationInputSchema = {
-  expected_config: z
-    .record(z.any())
-    .optional()
-    .describe("Expected configuration object to validate against actual host state"),
-  preview_id: z
-    .string()
-    .optional()
-    .describe("Preview ID to extract expected configuration from if omitted"),
-  workspace: z
-    .string()
-    .optional()
-    .describe("Workspace directory path (defaults to current working directory)"),
-  host_id: z
-    .string()
-    .optional()
-    .describe("Host identifier (optional, auto-detected from adapter if omitted)"),
-};
-
-export interface ValidateConfigurationResult {
-  valid: boolean;
-  workspace: string;
-  message: string;
-  details?: unknown;
-}
+export { ValidateConfigurationInputSchema, ValidateConfigurationResult };
 
 export async function handleValidateConfiguration(
   params: {

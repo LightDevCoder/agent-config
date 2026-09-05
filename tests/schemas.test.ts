@@ -4,6 +4,12 @@ import addFormats from "ajv-formats";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ProfileSchema } from "../src/profile/schema.js";
+import {
+  validateExecutionConfigAgainstJsonSchema,
+  validatePreviewAgainstJsonSchema,
+  validateApplyAgainstJsonSchema,
+  validateValidationAgainstJsonSchema,
+} from "../src/profile/validator.js";
 
 const SCHEMAS_DIR = resolve(__dirname, "../schemas");
 
@@ -17,6 +23,10 @@ describe("Canonical JSON Schemas", () => {
   let validateProfile: any;
   let validateHostCapabilities: any;
   let validateExecutionConfig: any;
+  let validatePreview: any;
+  let validateApply: any;
+  let validateValidation: any;
+  let validateCompanionContract: any;
 
   beforeAll(() => {
     ajv = new Ajv({ allErrors: true, strict: false });
@@ -25,10 +35,18 @@ describe("Canonical JSON Schemas", () => {
     const profileSchema = loadSchema("profile.schema.json");
     const hostCapabilitiesSchema = loadSchema("host-capabilities.schema.json");
     const executionConfigSchema = loadSchema("execution-config.schema.json");
+    const previewSchema = loadSchema("preview.schema.json");
+    const applySchema = loadSchema("apply.schema.json");
+    const validationSchema = loadSchema("validation.schema.json");
+    const companionContractSchema = loadSchema("companion-contract.schema.json");
 
     validateProfile = ajv.compile(profileSchema);
     validateHostCapabilities = ajv.compile(hostCapabilitiesSchema);
     validateExecutionConfig = ajv.compile(executionConfigSchema);
+    validatePreview = ajv.compile(previewSchema);
+    validateApply = ajv.compile(applySchema);
+    validateValidation = ajv.compile(validationSchema);
+    validateCompanionContract = ajv.compile(companionContractSchema);
   });
 
   describe("profile.schema.json", () => {
@@ -627,6 +645,174 @@ describe("Canonical JSON Schemas", () => {
         },
       };
       expect(validateExecutionConfig(invalidStrategy)).toBe(false);
+    });
+  });
+
+  describe("preview.schema.json", () => {
+    const validPreview = {
+      preview_id: "prev-12345",
+      preview_hash: "sha256-abcdef1234567890",
+      diff: "--- a\n+++ b",
+      expires_at: "2026-09-05T12:00:00Z",
+      target: "/path/to/target.json",
+      baseline_hash: "sha256-111222333444",
+      mutation_targets: ["/path/to/target.json"],
+    };
+
+    it("validates valid preview object conforming to preview schema", () => {
+      expect(validatePreview(validPreview)).toBe(true);
+      expect(validatePreviewAgainstJsonSchema(validPreview).valid).toBe(true);
+    });
+
+    it("accepts null baseline_hash when target does not yet exist", () => {
+      const previewNewFile = {
+        ...validPreview,
+        baseline_hash: null,
+      };
+      expect(validatePreview(previewNewFile)).toBe(true);
+      expect(validatePreviewAgainstJsonSchema(previewNewFile).valid).toBe(true);
+    });
+
+    it("rejects preview missing required fields", () => {
+      const missingHash = {
+        preview_id: "prev-12345",
+        diff: "diff",
+        expires_at: "2026-09-05T12:00:00Z",
+        target: "file.json",
+        mutation_targets: ["file.json"],
+      };
+      expect(validatePreview(missingHash)).toBe(false);
+      expect(validatePreviewAgainstJsonSchema(missingHash).valid).toBe(false);
+    });
+  });
+
+  describe("apply.schema.json", () => {
+    const validApply = {
+      success: true,
+      preview_id: "prev-12345",
+      applied_targets: ["/path/to/target.json"],
+      target: "/path/to/target.json",
+      baseline_hash: "sha256-111222333444",
+      message: "Configuration applied successfully.",
+    };
+
+    it("validates valid apply result conforming to apply schema", () => {
+      expect(validateApply(validApply)).toBe(true);
+      expect(validateApplyAgainstJsonSchema(validApply).valid).toBe(true);
+    });
+
+    it("rejects apply result missing success or preview_id", () => {
+      const invalid = {
+        applied_targets: ["target.json"],
+        message: "applied",
+      };
+      expect(validateApply(invalid)).toBe(false);
+      expect(validateApplyAgainstJsonSchema(invalid).valid).toBe(false);
+    });
+  });
+
+  describe("validation.schema.json", () => {
+    const validValidation = {
+      valid: true,
+      workspace: "/path/to/workspace",
+      message: "Host configuration matches expected state.",
+    };
+
+    it("validates valid validation result conforming to validation schema", () => {
+      expect(validateValidation(validValidation)).toBe(true);
+      expect(validateValidationAgainstJsonSchema(validValidation).valid).toBe(true);
+    });
+
+    it("rejects validation result missing valid boolean", () => {
+      const invalid = {
+        workspace: "/path/to/workspace",
+        message: "checked",
+      };
+      expect(validateValidation(invalid)).toBe(false);
+      expect(validateValidationAgainstJsonSchema(invalid).valid).toBe(false);
+    });
+  });
+
+  describe("companion-contract.schema.json", () => {
+    it("validates that companion-contract.schema.json is a valid JSON schema with protocol_version=1", () => {
+      const contractData = {
+        protocol_version: 1,
+        profile_version: 1,
+        tools: {
+          get_setup_status: {
+            name: "get_setup_status",
+            description: "check setup",
+            request: { type: "object", properties: {} },
+            response: { type: "object", properties: {} },
+          },
+          inspect_host: {
+            name: "inspect_host",
+            description: "inspect host",
+            request: { type: "object", properties: {} },
+            response: { type: "object", properties: {} },
+          },
+          get_profile: {
+            name: "get_profile",
+            description: "get profile",
+            request: { type: "object", properties: {} },
+            response: { type: "object", properties: {} },
+          },
+          save_profile: {
+            name: "save_profile",
+            description: "save profile",
+            request: { type: "object", properties: {} },
+            response: { type: "object", properties: {} },
+          },
+          preview_configuration: {
+            name: "preview_configuration",
+            description: "preview config",
+            request: { type: "object", properties: {} },
+            response: { type: "object", properties: {} },
+          },
+          apply_configuration: {
+            name: "apply_configuration",
+            description: "apply config",
+            request: { type: "object", properties: {} },
+            response: { type: "object", properties: {} },
+          },
+          validate_configuration: {
+            name: "validate_configuration",
+            description: "validate config",
+            request: { type: "object", properties: {} },
+            response: { type: "object", properties: {} },
+          },
+          reset_profile: {
+            name: "reset_profile",
+            description: "reset profile",
+            request: { type: "object", properties: {} },
+            response: { type: "object", properties: {} },
+          },
+        },
+        errors: {
+          type: "object",
+          properties: {
+            isError: true,
+            content: [{ type: "text", text: "err" }],
+          },
+        },
+      };
+
+      expect(validateCompanionContract(contractData)).toBe(true);
+    });
+  });
+
+  describe("Fail-Closed ExecutionConfig Validator Helper", () => {
+    it("rejects incomplete execution configs fail-closed", () => {
+      const incomplete = { task_shape: "single-pass" };
+      const res = validateExecutionConfigAgainstJsonSchema(incomplete);
+      expect(res.valid).toBe(false);
+      expect(res.errors?.length).toBeGreaterThan(0);
+    });
+
+    it("rejects null or non-object configs fail-closed", () => {
+      expect(validateExecutionConfigAgainstJsonSchema(null).valid).toBe(false);
+      expect(validateExecutionConfigAgainstJsonSchema("string").valid).toBe(false);
+      expect(validateExecutionConfigAgainstJsonSchema(123).valid).toBe(false);
     });
   });
 });

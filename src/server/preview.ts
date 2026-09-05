@@ -10,6 +10,8 @@ export interface StoredPreview {
   config: unknown;
   diff: string;
   mutation_targets: string[];
+  target: string;
+  baseline_hash: string | null;
   target_hashes: Record<string, string | null>;
   rendered: ConfigurationRenderResult;
   created_at: string;
@@ -63,6 +65,11 @@ export class PreviewManager {
     // 15 minutes TTL
     const expiresAt = new Date(createdAt.getTime() + 15 * 60 * 1000).toISOString();
 
+    const target = renderResult.mutation_targets[0] || workspace;
+    const baselineHash = renderResult.mutation_targets[0]
+      ? targetHashes[renderResult.mutation_targets[0]]
+      : null;
+
     const preview: StoredPreview = {
       preview_id: renderResult.preview_id,
       preview_hash: `sha256-${previewHash}`,
@@ -70,6 +77,8 @@ export class PreviewManager {
       config,
       diff: renderResult.diff,
       mutation_targets: renderResult.mutation_targets,
+      target,
+      baseline_hash: baselineHash,
       target_hashes: targetHashes,
       rendered: renderResult,
       created_at: createdAt.toISOString(),

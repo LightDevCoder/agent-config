@@ -55,6 +55,28 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
     },
   };
 
+  const validExecutionConfig: ExecutionConfig = {
+    task_shape: "single-pass",
+    model_mode: "single",
+    readiness: "executable",
+    topology: {
+      type: "single-session",
+      concurrency: 1,
+    },
+    execution: {
+      model: "test-model",
+      effort: "high",
+      effort_policy: "highest-supported",
+      context: "current-session",
+    },
+    review: {
+      strategy: "self-check",
+      model: "test-model",
+      effort: "high",
+      context: "current-session",
+    },
+  };
+
   beforeEach(async () => {
     tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "agent-config-tools-test-"));
     workspaceDir = path.join(tempDir, "workspace");
@@ -79,6 +101,7 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
     it("should return configured=false when no profile exists", async () => {
       const status = await handleGetSetupStatus({ workspace: workspaceDir }, getContext());
       expect(status.configured).toBe(false);
+      expect(status.protocol_version).toBe(1);
       expect(status.profile_version).toBeNull();
       expect(status.stale).toBe(false);
       expect(status.adapter_id).toBe("generic");
@@ -93,6 +116,7 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
 
       const status = await handleGetSetupStatus({ workspace: workspaceDir }, getContext());
       expect(status.configured).toBe(true);
+      expect(status.protocol_version).toBe(1);
       expect(status.profile_version).toBe(1);
       expect(status.stale).toBe(false);
       expect(status.host_id).toBe("generic");
@@ -185,24 +209,47 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
   });
 
   describe("5. preview_configuration", () => {
-    it("should render configuration preview with preview_id and diff", async () => {
-      const config = { model: "o3-mini", effort: "high" };
+    it("should render configuration preview with preview_id, preview_hash, target, baseline_hash, and diff", async () => {
       const res = await handlePreviewConfiguration(
-        { config, workspace: workspaceDir },
+        { config: validExecutionConfig, workspace: workspaceDir },
         getContext()
       );
 
       expect(res.preview_id).toBeDefined();
+      expect(res.preview_hash).toMatch(/^sha256-[a-f0-9]+$/);
       expect(res.diff).toContain("Plan-Only Configuration");
+      expect(res.target).toBeDefined();
+      expect(res.expires_at).toBeDefined();
+      expect(res.mutation_targets).toBeDefined();
       expect(previewManager.getPreview(res.preview_id)).toBeDefined();
+    });
+
+    it("should fail closed and reject preview when config is missing required fields", async () => {
+      // Incomplete config missing required task_shape, model_mode, readiness, topology, review
+      const malformedConfig = { model: "o3-mini", effort: "high" };
+
+      await expect(
+        handlePreviewConfiguration(
+          { config: malformedConfig, workspace: workspaceDir },
+          getContext()
+        )
+      ).rejects.toThrow(/canonical schema validation/);
+    });
+
+    it("should fail closed when config is null or non-object", async () => {
+      await expect(
+        handlePreviewConfiguration(
+          { config: null as any, workspace: workspaceDir },
+          getContext()
+        )
+      ).rejects.toThrow();
     });
   });
 
   describe("6. apply_configuration", () => {
     it("should apply configuration when preview is valid", async () => {
-      const config = { model: "o3-mini" };
       const preview = await handlePreviewConfiguration(
-        { config, workspace: workspaceDir },
+        { config: validExecutionConfig, workspace: workspaceDir },
         getContext()
       );
 
@@ -213,6 +260,7 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
 
       expect(applyRes.success).toBe(true);
       expect(applyRes.preview_id).toBe(preview.preview_id);
+      expect(applyRes.target).toBeDefined();
 
       // Verify second apply is rejected (already applied)
       await expect(
@@ -238,7 +286,11 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
 
       // Custom adapter that targets this file
       class FileMutatingAdapter extends GenericAdapter {
-        override async renderConfiguration(w: string, c: unknown) {
+        override async renderConfiguration(
+          _plan: ExecutionConfig,
+          _profile?: any,
+          _workspaceRoot?: string
+        ) {
           return {
             preview_id: "preview-file-test",
             mutation_targets: [targetFile],
@@ -252,7 +304,7 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
 
       // Take preview while file has { original: true }
       const preview = await handlePreviewConfiguration(
-        { config: { next: true }, workspace: workspaceDir },
+        { config: validExecutionConfig, workspace: workspaceDir },
         ctx
       );
 
@@ -372,6 +424,7 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
       });
       const statusData2 = JSON.parse((statusRes2.content[0] as any).text);
       expect(statusData2.configured).toBe(true);
+      expect(statusData2.protocol_version).toBe(1);
       expect(statusData2.stale).toBe(false);
 
       // 5. Get profile
@@ -383,13 +436,24 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
       expect(getData.found).toBe(true);
       expect(getData.profile.single_model.model).toBe("test-model");
 
-      // 6. Preview configuration
+      // 6. Preview configuration (fail-closed test: malformed config returns error)
+      const badPreviewRes = await client.callTool({
+        name: "preview_configuration",
+        arguments: { config: { invalid: true }, workspace: workspaceDir },
+      });
+      expect(badPreviewRes.isError).toBe(true);
+      expect((badPreviewRes.content[0] as any).text).toContain("preview_configuration error");
+
+      // Valid preview configuration succeeds
       const previewRes = await client.callTool({
         name: "preview_configuration",
-        arguments: { config: { test: true }, workspace: workspaceDir },
+        arguments: { config: validExecutionConfig, workspace: workspaceDir },
       });
+      expect(previewRes.isError).toBeFalsy();
       const previewData = JSON.parse((previewRes.content[0] as any).text);
       expect(previewData.preview_id).toBeDefined();
+      expect(previewData.preview_hash).toBeDefined();
+      expect(previewData.target).toBeDefined();
 
       // 7. Apply configuration
       const applyRes = await client.callTool({

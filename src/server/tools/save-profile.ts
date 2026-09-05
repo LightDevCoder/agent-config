@@ -1,23 +1,14 @@
 import path from "node:path";
-import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
 import { Profile, ProfileSchema } from "../../profile/schema.js";
 import { validateProfileAgainstJsonSchema } from "../../profile/validator.js";
+import {
+  SaveProfileInputSchema,
+  SaveProfileResult,
+} from "../../contracts/index.js";
 
-export const SaveProfileInputSchema = {
-  profile: z.record(z.any()).describe("Complete Agent Config profile document to save"),
-  workspace: z
-    .string()
-    .optional()
-    .describe("Optional workspace path override (defaults to profile.scope.workspace)"),
-};
-
-export interface SaveProfileResult {
-  success: boolean;
-  message: string;
-  profile: Profile;
-}
+export { SaveProfileInputSchema, SaveProfileResult };
 
 export async function handleSaveProfile(
   params: { profile: unknown; workspace?: string },

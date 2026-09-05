@@ -1,27 +1,16 @@
 import path from "node:path";
-import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
+import {
+  ResetProfileInputSchema,
+  ResetProfileResult,
+  ScopeType,
+} from "../../contracts/index.js";
 
-export const ResetProfileInputSchema = {
-  workspace: z
-    .string()
-    .optional()
-    .describe("Workspace directory path (defaults to current working directory)"),
-  host_id: z
-    .string()
-    .optional()
-    .describe("Host identifier (optional, auto-detected from adapter if omitted)"),
-};
-
-export interface ResetProfileResult {
-  success: boolean;
-  cleared: boolean;
-  message: string;
-}
+export { ResetProfileInputSchema, ResetProfileResult };
 
 export async function handleResetProfile(
-  params: { workspace?: string; host_id?: string },
+  params: { scope?: ScopeType; workspace?: string; host_id?: string },
   context: ToolContext
 ): Promise<ResetProfileResult> {
   const workspace = path.resolve(params.workspace || process.cwd());
@@ -30,15 +19,20 @@ export async function handleResetProfile(
     params.host_id
   );
   const hostId = params.host_id || adapter.id;
+  const targetScope = params.scope || "project";
+  const targetWorkspace = targetScope === "global" ? "global" : workspace;
 
-  const cleared = await context.profileStore.deleteProfile(hostId, workspace);
+  const cleared = await context.profileStore.deleteProfile(hostId, targetWorkspace);
 
   return {
     success: true,
     cleared,
+    reset: cleared,
+    host_id: hostId,
+    scope: targetScope,
     message: cleared
-      ? `Profile for host '${hostId}' at workspace '${workspace}' was successfully removed.`
-      : `No profile existed for host '${hostId}' at workspace '${workspace}'.`,
+      ? `Profile for host '${hostId}' (${targetScope}) at '${targetWorkspace}' was successfully removed.`
+      : `No profile existed for host '${hostId}' (${targetScope}) at '${targetWorkspace}'.`,
   };
 }
 

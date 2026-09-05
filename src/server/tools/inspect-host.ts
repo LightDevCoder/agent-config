@@ -1,24 +1,17 @@
 import path from "node:path";
-import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
-import { HostCapabilities } from "../../adapters/contract.js";
+import {
+  InspectHostInputSchema,
+  InspectHostResult,
+} from "../../contracts/index.js";
 
-export const InspectHostInputSchema = {
-  workspace: z
-    .string()
-    .optional()
-    .describe("Workspace directory path (defaults to current working directory)"),
-  host_id: z
-    .string()
-    .optional()
-    .describe("Host identifier (optional, auto-detected if omitted)"),
-};
+export { InspectHostInputSchema, InspectHostResult };
 
 export async function handleInspectHost(
   params: { workspace?: string; host_id?: string },
   context: ToolContext
-): Promise<HostCapabilities> {
+): Promise<InspectHostResult> {
   const workspace = path.resolve(params.workspace || process.cwd());
   const adapter = await context.adapterRegistry.resolveAdapter(
     workspace,
