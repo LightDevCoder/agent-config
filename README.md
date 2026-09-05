@@ -33,12 +33,14 @@ Host Adapters
 
 ## Installation
 
-### Recommended Global Installation
-
-Install directly via npm from GitHub:
+Clone and install globally:
 
 ```bash
-npm install -g github:LightDevCoder/agent-config
+git clone https://github.com/LightDevCoder/agent-config.git
+cd agent-config
+npm ci
+npm run build
+npm install -g .
 ```
 
 Verify that the CLI is available and can probe the environment:
@@ -48,18 +50,6 @@ agent-config setup --check
 ```
 
 *(Note: `setup --check` returns non-zero exit code when the companion is not yet registered or configured for the current workspace. This confirms the CLI is functional.)*
-
-### Build from Source
-
-If installing from a local clone or git source:
-
-```bash
-git clone https://github.com/LightDevCoder/agent-config.git
-cd agent-config
-npm ci
-npm run build
-npm install -g .
-```
 
 ### Companion MCP Registration
 
