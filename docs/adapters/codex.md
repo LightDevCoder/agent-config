@@ -91,16 +91,16 @@
     ```
   - Project Scope target: `<workspace>/.codex/config.toml`.
   - User/Global Scope target: `$CODEX_HOME/config.toml` or `~/.codex/config.toml`.
-  - Secondary fallback: `.codex/mcp.json` (JSON `mcpServers` format).
+  - Legacy / Migration-Only Note: `.codex/mcp.json` is legacy/unsupported/migration-only for read-only inspection; it is NOT a current configuration surface or writable mutation target.
   - Doctor command: `codex doctor` verifies local config, auth, and runtime health.
 - **Adapter Adaptation:**
   - Previews generate unified diffs with cryptographic baseline hash and preview hash (`FrozenMutationPreview`).
   - Scope is strictly preserved: project preview -> project apply; user preview -> user apply.
   - Inspection checks project scope first; falls back to user scope if unconfigured.
-  - Doctor/validation validates TOML/JSON parsing, server command/args presence, and reachability.
+  - Doctor/validation validates TOML parsing, server command/args presence, and reachability.
 
 ## Machine-Readable Inspection Surfaces
-- Config files: `.codex/config.toml`, `.codex/agents/*.toml`, fallback `.codex/mcp.json`.
+- Config files: `.codex/config.toml`, `.codex/agents/*.toml` (legacy read-only inspection: `.codex/mcp.json`).
 - CLI commands: `codex --version`, `codex mcp list`, `codex doctor`.
 - State databases & caches: `models_cache.json`, `.codex-global-state.json`.
 
@@ -116,11 +116,11 @@
 - **Available Capabilities (when evidenced):**
   - Project and user configuration mutation via TOML.
   - Per-agent model and reasoning effort configuration under `.codex/agents/*.toml`.
-  - MCP companion server registration in `.codex/mcp.json` or user `mcp.json`.
+  - MCP companion server registration in `<workspace>/.codex/config.toml` (`[mcp_servers.agent-config]`) or user `config.toml`.
   - Discrete reasoning effort controls (`low`, `medium`, `high`, `xhigh`).
 - **Unavailable Capabilities:**
   - In-memory runtime session mutation without file persistence or session restart.
-  - Non-JSON MCP formats (MCP is strictly `mcpServers` JSON).
+  - Writing companion configuration to `.codex/mcp.json` (canonical target is TOML `config.toml`).
 - **Unknown Capabilities:**
   - Model selection is `unknown` when no models are configured in TOML or runtime environment.
   - Subagents and parallelism are `unknown` in clean unconfigured workspaces.

@@ -18,7 +18,11 @@ export async function handleGetProfile(
     workspace,
     params.host_id
   );
-  const hostId = params.host_id || adapter.id;
+  const hostCapabilities = await adapter.inspectCapabilities(workspace);
+  const hostId = params.host_id || hostCapabilities?.host_id;
+  if (!hostId) {
+    throw new Error("Unable to determine host ID from input or host inspection.");
+  }
   const lookupTarget = params.scope === "global" ? "global" : workspace;
 
   const profile = await context.profileStore.getProfile(hostId, lookupTarget);

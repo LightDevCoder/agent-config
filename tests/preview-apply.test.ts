@@ -11,7 +11,8 @@ import {
   handleApplyConfiguration,
   handleValidateConfiguration,
 } from "../src/server/tools/index.js";
-import { ExecutionConfig } from "../src/profile/schema.js";
+import { ExecutionConfig, Profile } from "../src/profile/schema.js";
+import { HostAdapter } from "../src/adapters/contract.js";
 
 describe("Preview-Apply Lifecycle & Drift Verification", () => {
   let tempDir: string;
@@ -112,6 +113,8 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
   });
 
   afterEach(async () => {
+    delete process.env.CODEX_MODEL;
+    delete process.env.CODEX_HOME;
     if (fs.existsSync(tempDir)) {
       await fsp.rm(tempDir, { recursive: true, force: true });
     }
@@ -121,16 +124,81 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     return { previewManager, adapterRegistry, profileStore };
   }
 
+  async function setupCodexHost(workspace: string, decomposed: boolean = false) {
+    await fsp.mkdir(path.join(workspace, ".codex", "agents"), { recursive: true });
+    await fsp.mkdir(path.join(workspace, ".codex", "sessions"), { recursive: true });
+    const config =
+      'model = "old-model"\nmodel_reasoning_effort = "low"\nmax_concurrency = 4\nsupported_models = ["old-model", "old-project-model", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra"]\n[agents]\nmax_threads = 4\n';
+    await fsp.writeFile(path.join(workspace, ".codex", "config.toml"), config, "utf-8");
+
+    const profile: Profile = decomposed
+      ? {
+          profile_version: 1,
+          host: { id: "codex", adapter: "codex" },
+          scope: { type: "project", workspace },
+          model_mode: "multi",
+          tiers: {
+            routine: { model: "gpt-5.6-luna", effort: { value: "low" }, source: "user-confirmed" },
+            standard: { model: "gpt-5.6-terra", effort: { value: "high" }, source: "user-confirmed" },
+            high: { model: "gpt-5.6-sol", effort: { value: "high" }, source: "user-confirmed" },
+            review: { model: "gpt-5.6-sol", effort: { value: "high" }, source: "user-confirmed" },
+          },
+          capabilities: {
+            subagents: "available",
+            threads: "available",
+            parallelism: "available",
+          },
+        }
+      : {
+          profile_version: 1,
+          host: { id: "codex", adapter: "codex" },
+          scope: { type: "project", workspace },
+          model_mode: "single",
+          single_model: {
+            model: "gpt-5.6-sol",
+            execution_effort: { policy: "highest-supported" },
+          },
+          capabilities: {
+            subagents: "available",
+            threads: "available",
+            parallelism: "available",
+          },
+        };
+    await profileStore.saveProfile(profile);
+  }
+
+  async function setupOpenCodeHost(workspace: string) {
+    const config = {
+      model: "cpa-gui/gemini-3.8-flash-high",
+      models: ["cpa-gui/gemini-3.8-flash-high"],
+    };
+    await fsp.writeFile(
+      path.join(workspace, "opencode.json"),
+      JSON.stringify(config, null, 2),
+      "utf-8"
+    );
+
+    const profile: Profile = {
+      profile_version: 1,
+      host: { id: "opencode", adapter: "opencode" },
+      scope: { type: "project", workspace },
+      model_mode: "single",
+      single_model: {
+        model: "cpa-gui/gemini-3.8-flash-high",
+        execution_effort: { policy: "highest-supported" },
+      },
+      capabilities: {
+        subagents: "available",
+        threads: "available",
+        parallelism: "available",
+      },
+    };
+    await profileStore.saveProfile(profile);
+  }
+
   describe("Preview Generation & Hash Recording", () => {
     it("generates a preview with deterministic preview_id and records target hashes", async () => {
-      // Set up a mock codex workspace
-      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
-      const initialConfig = 'model = "old-model"\nmodel_reasoning_effort = "low"\n';
-      await fsp.writeFile(
-        path.join(workspaceDir, ".codex", "config.toml"),
-        initialConfig,
-        "utf-8"
-      );
+      await setupCodexHost(workspaceDir);
 
       const preview = await handlePreviewConfiguration(
         { config: codexSinglePlan, workspace: workspaceDir },
@@ -172,6 +240,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     });
 
     it("rejects apply when requested workspace does not match preview workspace", async () => {
+      await setupCodexHost(workspaceDir);
       const otherWorkspace = path.join(tempDir, "other-workspace");
       await fsp.mkdir(otherWorkspace, { recursive: true });
 
@@ -189,7 +258,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     });
 
     it("rejects apply when preview has already been applied (single-use guard)", async () => {
-      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await setupCodexHost(workspaceDir);
 
       const preview = await handlePreviewConfiguration(
         { config: codexSinglePlan, workspace: workspaceDir },
@@ -213,9 +282,8 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     });
 
     it("rejects apply when target file has been modified externally between preview and apply (anti-drift guard)", async () => {
-      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await setupCodexHost(workspaceDir);
       const targetFile = path.join(workspaceDir, ".codex", "config.toml");
-      await fsp.writeFile(targetFile, 'model = "model-v1"\n', "utf-8");
 
       // Generate preview
       const preview = await handlePreviewConfiguration(
@@ -223,7 +291,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
         getContext()
       );
 
-      // Drift: someone modifies or commits to target file in the meantime
+      // Drift: someone modifies target file after preview
       await fsp.writeFile(targetFile, 'model = "model-tampered"\n', "utf-8");
 
       // Apply must be rejected
@@ -237,9 +305,31 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
 
     it("rejects apply when target file was absent during preview but created before apply", async () => {
       await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
-      const targetFile = path.join(workspaceDir, ".codex", "config.toml");
+      // Root codex.toml evidences model on host
+      await fsp.writeFile(
+        path.join(workspaceDir, "codex.toml"),
+        'model = "gpt-5.6-sol"\n',
+        "utf-8"
+      );
 
-      // Target file does not exist initially
+      const profile: Profile = {
+        profile_version: 1,
+        host: { id: "codex", adapter: "codex" },
+        scope: { type: "project", workspace: workspaceDir },
+        model_mode: "single",
+        single_model: {
+          model: "gpt-5.6-sol",
+          execution_effort: { policy: "highest-supported" },
+        },
+        capabilities: {
+          subagents: "available",
+          threads: "available",
+          parallelism: "available",
+        },
+      };
+      await profileStore.saveProfile(profile);
+
+      const targetFile = path.join(workspaceDir, ".codex", "config.toml");
       expect(fs.existsSync(targetFile)).toBe(false);
 
       const preview = await handlePreviewConfiguration(
@@ -260,7 +350,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     });
 
     it("rejects apply when host version drifts between preview and apply (stale preview guard per SPEC §31)", async () => {
-      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await setupCodexHost(workspaceDir);
 
       const preview = await handlePreviewConfiguration(
         { config: codexSinglePlan, workspace: workspaceDir },
@@ -285,7 +375,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
 
   describe("Complete Apply & Post-Apply State Validation", () => {
     it("applies Codex single-pass configuration and validates post-apply state", async () => {
-      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await setupCodexHost(workspaceDir);
 
       const preview = await handlePreviewConfiguration(
         { config: codexSinglePlan, workspace: workspaceDir },
@@ -314,7 +404,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     });
 
     it("detects post-apply configuration drift when files are tampered with after apply", async () => {
-      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await setupCodexHost(workspaceDir);
 
       const preview = await handlePreviewConfiguration(
         { config: codexSinglePlan, workspace: workspaceDir },
@@ -346,7 +436,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     });
 
     it("applies Codex decomposed configuration with multiple subagent tomls and detects subagent drift", async () => {
-      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await setupCodexHost(workspaceDir, true);
 
       const preview = await handlePreviewConfiguration(
         { config: codexDecomposedPlan, workspace: workspaceDir },
@@ -388,7 +478,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     });
 
     it("applies OpenCode configuration and detects JSON drift", async () => {
-      await fsp.writeFile(path.join(workspaceDir, "opencode.json"), "{}", "utf-8");
+      await setupOpenCodeHost(workspaceDir);
 
       const preview = await handlePreviewConfiguration(
         { config: openCodeSinglePlan, workspace: workspaceDir },
@@ -422,10 +512,66 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
     });
 
     it("handles Generic adapter plan-only preview, apply, and validate without filesystem mutation", async () => {
-      // Empty workspace without .codex or opencode.json resolves to Generic adapter
+      const planOnlyAdapter: HostAdapter = {
+        id: "generic",
+        identifyHost: async () => false,
+        inspectVersion: async () => ({
+          version: "1.0",
+          compatibility: "supported",
+          fail_closed_for_mutation: true,
+        }),
+        inspectCapabilities: async () => ({
+          host_id: "generic",
+          adapter_id: "generic",
+          observed_at: new Date().toISOString(),
+          available_models: [{ id: "gpt-5.6-sol", state: "available" as const }],
+          supported_effort_values: ["high"],
+          capabilities: {
+            subagents: { state: "unavailable" },
+            threads: { state: "unavailable" },
+            parallelism: { state: "unavailable" },
+            model_selection: { state: "available", scopes: ["current-session"] },
+            configuration_mutation: {
+              state: "unavailable",
+              supports_native_files: false,
+              supports_session_mutation: false,
+            },
+          },
+        }),
+        renderConfiguration: async () => ({
+          preview_id: "preview-plan-only-1",
+          mutation_targets: [],
+          diff: "Plan-Only Configuration",
+        }),
+        applyConfiguration: async (previewId) => ({
+          success: true,
+          preview_id: previewId,
+          applied_targets: [],
+          message: "Plan-Only Configuration applied without mutation",
+        }),
+        validateConfiguration: async () => ({ valid: true }),
+        inspectCompanionRegistration: async () => ({ registered: false }),
+        previewCompanionRegistration: async () => ({ supported: false, target_file: "", diff: "", mutation_targets: [] }),
+        applyCompanionRegistration: async () => ({ success: false }),
+        validateCompanionRegistration: async () => ({ valid: false }),
+      };
+      const planOnlyRegistry = new AdapterRegistry(planOnlyAdapter);
+      const ctx = { previewManager, adapterRegistry: planOnlyRegistry, profileStore };
+
+      await profileStore.saveProfile({
+        profile_version: 1,
+        host: { id: "generic", adapter: "generic" },
+        scope: { type: "project", workspace: workspaceDir },
+        model_mode: "single",
+        single_model: {
+          model: "gpt-5.6-sol",
+          execution_effort: { policy: "highest-supported" },
+        },
+      });
+
       const preview = await handlePreviewConfiguration(
         { config: codexSinglePlan, workspace: workspaceDir },
-        getContext()
+        ctx
       );
 
       expect(preview.mutation_targets).toHaveLength(0);
@@ -433,7 +579,7 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
 
       const apply = await handleApplyConfiguration(
         { preview_id: preview.preview_id, workspace: workspaceDir },
-        getContext()
+        ctx
       );
       expect(apply.success).toBe(true);
       expect(apply.applied_targets).toHaveLength(0);
@@ -444,16 +590,14 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
 
       const val = await handleValidateConfiguration(
         { expected_config: codexSinglePlan, workspace: workspaceDir },
-        getContext()
+        ctx
       );
       expect(val.valid).toBe(true);
     });
 
     it("ensures scope preservation between project and user/global targets without scope drop (SPEC §28)", async () => {
-      // Setup project codex file
-      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await setupCodexHost(workspaceDir);
       const projectTarget = path.join(workspaceDir, ".codex", "config.toml");
-      await fsp.writeFile(projectTarget, 'model = "old-project-model"\n', "utf-8");
 
       const preview = await handlePreviewConfiguration(
         { config: codexSinglePlan, workspace: workspaceDir },

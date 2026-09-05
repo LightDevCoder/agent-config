@@ -232,7 +232,8 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
 
           expect(validation.valid).toBe(true);
           expect(validation.registered).toBe(true);
-          expect(validation.mcp_reachable).toBe(true);
+          expect(validation.mcp_reachable).toBe(false);
+          expect(validation.healthy).toBe(false);
           expect(validation.semantic_config_valid).toBe(true);
         });
       });
@@ -430,7 +431,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
   // Section 5: CLI Setup Runner (`runSetupCli`)
   // ==========================================================================
   describe("CLI Setup Runner (agent-config setup)", () => {
-    it("executes --check returning 1 on unregistered and 0 on registered", async () => {
+    it("executes --check returning 1 on unregistered and 1 on registered but unreachable (healthy: false)", async () => {
       await fsp.mkdir(path.join(workspaceDir, ".cursor"), { recursive: true });
 
       const checkUnregistered = await runSetupCli([
@@ -453,6 +454,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       ]);
       expect(applyResult).toBe(0);
 
+      // Registered but process is unreachable -> must return 1 and NOT fake healthy! (SPEC §5, §6)
       const checkRegistered = await runSetupCli([
         "--workspace",
         workspaceDir,
@@ -460,7 +462,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
         "cursor",
         "--check",
       ]);
-      expect(checkRegistered).toBe(0);
+      expect(checkRegistered).toBe(1);
     });
 
     it("refuses to apply mutation without --yes flag", async () => {
@@ -572,7 +574,8 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       const validateData = JSON.parse((validateRes.content[0] as { type: string; text: string }).text);
       expect(validateData.valid).toBe(true);
       expect(validateData.registered).toBe(true);
-      expect(validateData.mcp_reachable).toBe(true);
+      expect(validateData.mcp_reachable).toBe(false);
+      expect(validateData.healthy).toBe(false);
     });
 
     it("preserves standard 8 tools when includeSetupTools is not set", async () => {

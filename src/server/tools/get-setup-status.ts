@@ -20,7 +20,11 @@ export async function handleGetSetupStatus(
     workspace,
     params.host_id
   );
-  const hostId = params.host_id || adapter.id;
+  const hostCapabilities = await adapter.inspectCapabilities(workspace);
+  const hostId = params.host_id || hostCapabilities?.host_id;
+  if (!hostId) {
+    throw new Error("Unable to determine host ID from input or host inspection.");
+  }
   const lookupTarget = params.scope === "global" ? "global" : workspace;
 
   const companionStatus = await adapter.inspectCompanionRegistration(
@@ -45,7 +49,6 @@ export async function handleGetSetupStatus(
   }
 
   // Check staleness against current host capabilities
-  const hostCapabilities = await adapter.inspectCapabilities(workspace);
   const staleCheck = checkProfileStale(profile, hostCapabilities);
 
   return {
@@ -70,7 +73,7 @@ export function registerGetSetupStatusTool(
     "get_setup_status",
     {
       description:
-        "Check current Agent Config setup status, profile version, host/adapter IDs, and stale status.",
+        "Query setup and configuration readiness status for the current host and workspace.",
       inputSchema: GetSetupStatusInputSchema,
     },
     async (params) => {
@@ -82,7 +85,12 @@ export function registerGetSetupStatusTool(
       } catch (err: any) {
         return {
           isError: true,
-          content: [{ type: "text", text: `get_setup_status error: ${err.message}` }],
+          content: [
+            {
+              type: "text",
+              text: `get_setup_status error: ${err.message}`,
+            },
+          ],
         };
       }
     }

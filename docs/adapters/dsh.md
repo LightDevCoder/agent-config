@@ -37,13 +37,11 @@
   - Global user configuration: `$DSH_HOME/settings.yaml` (or `settings.yml`), `$DSH_HOME/.credentials.yaml`
   - Profiles directory: `$DSH_HOME/profiles/<profile-name>/`
     - Profile package: `package.json` declaring `dsh.profile.bundles` (e.g. `@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-web-app`)
-    - Profile patch layer: `cordis.patch.yml` / `cordis.patch.yaml` (loader patch entries: id-targeted overrides, disables, and inserts)
+    - Profile patch layer: `$DSH_HOME/profiles/<name>/cordis.patch.yml` or `$DSH_HOME/cordis.patch.yml` (loader patch entries: id-targeted overrides, disables, and inserts)
     - Profile entry composition: `cordis.yml` / `cordis.yaml`
   - Workspace configuration:
-    - `<workspace>/cordis.patch.yml`, `<workspace>/cordis.patch.yaml`
-    - `<workspace>/cordis.yml`, `<workspace>/cordis.yaml`
-    - `<workspace>/.dsh/cordis.patch.yml`, `<workspace>/.dsh/cordis.yml`
-    - Compatibility fallback: `<workspace>/.dsh/config.json`, `<workspace>/dsh.config.json`
+    - Current canonical surface: `<workspace>/cordis.patch.yml` (explicit `--patch overlay`)
+    - Legacy / compatibility-only fallback: `<workspace>/.dsh/config.json`, `<workspace>/dsh.config.json` (legacy read-only compatibility; NOT current configuration surfaces or mutation targets)
 
 ## Real Cordis Plugin Architecture vs Fabricated JSON Contracts
 - **No Fabricated JSON Files:**
@@ -59,7 +57,7 @@
         command: uvx
         args: [...]
     ```
-  - For backward compatibility and cross-harness test isolation, `agent-config` supports both native Cordis YAML configuration (`cordis.patch.yml`, `cordis.yml`, `settings.yaml`) and structured JSON representations (`.dsh/config.json`, `dsh.config.json`).
+  - For backward compatibility and cross-harness test reading, legacy JSON formats (`.dsh/config.json`, `dsh.config.json`) may be inspected, but current mutation targets strictly use Cordis YAML patch files.
 
 ## Executable Detection & Version Detection
 - **Executable Detection:**
@@ -80,23 +78,20 @@
 ## Config Files, Scopes, & Precedence
 - **Host Config Files:**
   - Project Scope:
-    - `<workspace>/cordis.patch.yml` or `<workspace>/cordis.patch.yaml`
-    - `<workspace>/.dsh/cordis.patch.yml`
-    - `<workspace>/cordis.yml` or `<workspace>/cordis.yaml`
-    - `<workspace>/.dsh/config.json` or `<workspace>/dsh.config.json`
+    - Current canonical mutation target: `<workspace>/cordis.patch.yml` (explicit `--patch overlay`)
+    - Legacy read-only inspection: `<workspace>/.dsh/cordis.patch.yml`, `<workspace>/cordis.yml`, `<workspace>/.dsh/config.json`, `<workspace>/dsh.config.json`
   - User / Profile Scope:
-    - `$DSH_HOME/profiles/web/cordis.patch.yml` (or active profile patch file)
-    - `$DSH_HOME/settings.yaml` (global settings)
-    - `~/.dsh/cordis.patch.yml`
-    - `~/.dsh/config.json`
+    - Current canonical target: `$DSH_HOME/profiles/<name>/cordis.patch.yml` or `$DSH_HOME/cordis.patch.yml`
+    - Global settings: `$DSH_HOME/settings.yaml`
+    - Legacy inspection: `~/.dsh/config.json`
 - **Config Hierarchy & Precedence:**
   - Runtime environment variables (`DSH_*`) take highest precedence.
-  - Workspace configuration (`cordis.patch.yml` / `.dsh/config.json`) overrides user / profile layer.
+  - Workspace configuration (`cordis.patch.yml`) overrides user / profile layer.
   - Profile patch layer (`cordis.patch.yml`) overrides bundle defaults.
   - User profile settings (`settings.yaml`) serve as fallback defaults.
 - **Scope Isolation:**
-  - Project preview and apply strictly target workspace configuration (`<workspace>/cordis.patch.yml` or `<workspace>/.dsh/config.json`).
-  - Global/user preview and apply target user/profile configuration (`$DSH_HOME/profiles/web/cordis.patch.yml` or `~/.dsh/settings.yaml`).
+  - Project preview and apply strictly target workspace configuration (`<workspace>/cordis.patch.yml`).
+  - Global/user preview and apply target user/profile configuration (`$DSH_HOME/profiles/<name>/cordis.patch.yml` or `$DSH_HOME/cordis.patch.yml`).
 
 ## Model-Selection Mechanism
 - **Host Mechanism:**

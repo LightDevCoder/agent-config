@@ -6,7 +6,10 @@ import {
   ExtendedPreviewResult,
 } from "../../contracts/index.js";
 import { ExecutionConfig, ExecutionConfigSchema } from "../../profile/schema.js";
-import { validateExecutionConfigAgainstJsonSchema } from "../../profile/validator.js";
+import {
+  validateExecutionConfigAgainstJsonSchema,
+  validateExecutionConfig,
+} from "../../profile/validator.js";
 
 export { PreviewConfigurationInputSchema, ExtendedPreviewResult };
 
@@ -14,7 +17,7 @@ export async function handlePreviewConfiguration(
   params: { config: unknown; workspace?: string; host_id?: string },
   context: ToolContext
 ): Promise<ExtendedPreviewResult> {
-  // Fail-closed validation against canonical JSON Schema
+  // 1. Fail-closed canonical schema validation
   const jsonValidation = validateExecutionConfigAgainstJsonSchema(params.config);
   if (!jsonValidation.valid) {
     throw new Error(
@@ -22,7 +25,7 @@ export async function handlePreviewConfiguration(
     );
   }
 
-  // Parse strictly with ExecutionConfigSchema (Zod) to ensure type safety
+  // 2. Parse strictly with ExecutionConfigSchema (Zod) to ensure type safety
   const validatedConfig: ExecutionConfig = ExecutionConfigSchema.parse(params.config);
 
   const workspace = path.resolve(params.workspace || process.cwd());
@@ -31,9 +34,39 @@ export async function handlePreviewConfiguration(
     params.host_id
   );
 
-  const profile = await context.profileStore.getProfile(adapter.id, workspace);
+  // 3. Resolve concrete host_id & current HostCapabilities (§20, §3, §4)
+  // Unified production lookup: current Host inspection -> concrete host_id
+  const hostCapabilities = await adapter.inspectCapabilities(workspace);
+  const concreteHostId = params.host_id || hostCapabilities?.host_id;
+  if (!concreteHostId) {
+    throw new Error(
+      "Unable to determine concrete host ID: host inspection did not evidence a host_id and no explicit host_id was provided."
+    );
+  }
 
-  // Adapters are passed validatedConfig (strongly typed ExecutionConfig), never unchecked 'as any'
+  // 4. Resolve effective Profile by concrete host_id + workspace scope
+  // MUST NOT look up by adapter.id when host_id != adapter_id!
+  const profile = await context.profileStore.getProfile(concreteHostId, workspace);
+  if (!profile) {
+    throw new Error(
+      `No authorized profile found for host '${concreteHostId}' at workspace '${workspace}'. A user-confirmed profile is required before configuration can be previewed.`
+    );
+  }
+
+  // 5. Validate ExecutionConfig against Profile authority and Host capability intersection
+  // Host defines what exists, User Profile defines what may be used, Agent Config chooses only inside intersection
+  const validationResult = validateExecutionConfig(
+    validatedConfig,
+    profile,
+    hostCapabilities
+  );
+  if (!validationResult.valid) {
+    throw new Error(
+      `Execution configuration validation failed against Profile and Host capabilities:\n${validationResult.errors?.join("\n")}`
+    );
+  }
+
+  // 6. PASS -> Only now call adapter preview/render
   const renderFn = adapter.previewConfiguration
     ? adapter.previewConfiguration.bind(adapter)
     : adapter.renderConfiguration?.bind(adapter);
@@ -45,7 +78,7 @@ export async function handlePreviewConfiguration(
 
   const renderResult = await renderFn(
     validatedConfig,
-    profile || undefined,
+    profile,
     workspace
   );
 
@@ -58,7 +91,7 @@ export async function handlePreviewConfiguration(
     validatedConfig,
     {
       adapter_id: adapter.id,
-      host_identity: adapter.id,
+      host_identity: concreteHostId,
       host_version: versionInfo.version,
       scope: workspace ? "project" : "global",
       target: renderResult.mutation_targets[0] || workspace,
@@ -99,7 +132,10 @@ export function registerPreviewConfigurationTool(
         return {
           isError: true,
           content: [
-            { type: "text", text: `preview_configuration error: ${err.message}` },
+            {
+              type: "text",
+              text: `preview_configuration error: ${err.message}`,
+            },
           ],
         };
       }

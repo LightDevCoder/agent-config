@@ -83,7 +83,7 @@ Options:
   }
 
   try {
-    // 1. Inspect only
+    // 1. Inspect and verify authentic companion health (§5, §6)
     if (options.checkOnly) {
       const inspection = await inspectCompanionSetup({
         workspace: options.workspace,
@@ -91,16 +91,68 @@ Options:
         scope: options.scope,
       });
 
+      if (!inspection.registered) {
+        if (options.json) {
+          console.log(
+            JSON.stringify(
+              {
+                registered: false,
+                configured: false,
+                reachable: false,
+                healthy: false,
+                host_id: inspection.host_id,
+                adapter_id: inspection.adapter_id,
+                message: `Companion MCP is not registered for host '${inspection.host_id}'.`,
+              },
+              null,
+              2
+            )
+          );
+        } else {
+          console.log(`Harness:    ${inspection.host_id} (Adapter: ${inspection.adapter_id})`);
+          console.log(`Registered: NO`);
+        }
+        return 1;
+      }
+
+      const validation = await validateCompanionSetup({
+        workspace: options.workspace,
+        host_id: options.host_id,
+        scope: options.scope,
+      });
+
       if (options.json) {
-        console.log(JSON.stringify(inspection, null, 2));
+        console.log(
+          JSON.stringify(
+            {
+              inspection,
+              validation,
+              registered: validation.registered,
+              configured: validation.configured,
+              reachable: validation.reachable,
+              healthy: validation.healthy,
+            },
+            null,
+            2
+          )
+        );
       } else {
         console.log(`Harness:    ${inspection.host_id} (Adapter: ${inspection.adapter_id})`);
-        console.log(`Registered: ${inspection.registered ? "YES" : "NO"}`);
+        console.log(`Registered: ${validation.registered ? "YES" : "NO"}`);
+        console.log(`Configured: ${validation.configured ? "YES" : "NO"}`);
+        console.log(`Reachable:  ${validation.reachable ? "YES" : "NO"}`);
+        console.log(`Healthy:    ${validation.healthy ? "YES" : "NO"}`);
         if (inspection.locator) {
           console.log(`Locator:    ${inspection.locator}`);
         }
+        if (validation.health?.missing_tools && validation.health.missing_tools.length > 0) {
+          console.log(`Missing tools: ${validation.health.missing_tools.join(", ")}`);
+        }
+        if (validation.health?.schema_errors && validation.health.schema_errors.length > 0) {
+          console.log(`Schema errors: ${validation.health.schema_errors.join("; ")}`);
+        }
       }
-      return inspection.registered ? 0 : 1;
+      return validation.healthy ? 0 : 1;
     }
 
     // 2. Full lifecycle or preview/apply

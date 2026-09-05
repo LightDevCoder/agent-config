@@ -77,13 +77,24 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
     },
   };
 
+  class TestGenericAdapter extends GenericAdapter {
+    override async inspectCapabilities(workspaceRoot?: string) {
+      const base = await super.inspectCapabilities(workspaceRoot);
+      return {
+        ...base,
+        available_models: [{ id: "test-model", state: "available" as const }],
+        supported_effort_values: ["low", "high"],
+      };
+    }
+  }
+
   beforeEach(async () => {
     tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "agent-config-tools-test-"));
     workspaceDir = path.join(tempDir, "workspace");
     await fsp.mkdir(workspaceDir, { recursive: true });
 
     profileStore = new ProfileStore({ baseDir: path.join(tempDir, "profiles") });
-    adapterRegistry = new AdapterRegistry();
+    adapterRegistry = new AdapterRegistry(new TestGenericAdapter());
     previewManager = new PreviewManager();
   });
 
@@ -210,6 +221,11 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
 
   describe("5. preview_configuration", () => {
     it("should render configuration preview with preview_id, preview_hash, target, baseline_hash, and diff", async () => {
+      await profileStore.saveProfile({
+        ...validProfile,
+        scope: { type: "project", workspace: workspaceDir },
+      });
+
       const res = await handlePreviewConfiguration(
         { config: validExecutionConfig, workspace: workspaceDir },
         getContext()
@@ -261,6 +277,11 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
 
   describe("6. apply_configuration", () => {
     it("should apply configuration when preview is valid", async () => {
+      await profileStore.saveProfile({
+        ...validProfile,
+        scope: { type: "project", workspace: workspaceDir },
+      });
+
       const preview = await handlePreviewConfiguration(
         { config: validExecutionConfig, workspace: workspaceDir },
         getContext()
@@ -294,11 +315,16 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
     });
 
     it("should reject apply when target files have drifted since preview", async () => {
+      await profileStore.saveProfile({
+        ...validProfile,
+        scope: { type: "project", workspace: workspaceDir },
+      });
+
       const targetFile = path.join(workspaceDir, "test-target.json");
       await fsp.writeFile(targetFile, JSON.stringify({ original: true }), "utf-8");
 
       // Custom adapter that targets this file
-      class FileMutatingAdapter extends GenericAdapter {
+      class FileMutatingAdapter extends TestGenericAdapter {
         override async renderConfiguration(
           _plan: ExecutionConfig,
           _profile?: any,

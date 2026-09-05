@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import { HostAdapter, CompanionRegistrationStatus, CompanionRegistrationPreview, ValidationResult } from "../adapters/contract.js";
 import { AdapterRegistry, defaultAdapterRegistry } from "../adapters/registry.js";
 import {
@@ -114,6 +115,7 @@ export interface CompanionSetupValidationOptions {
   registry?: AdapterRegistry;
   protocol_version?: number;
   tools?: CompanionToolDefinition[] | Record<string, CompanionToolDefinition>;
+  reachable?: boolean;
 }
 
 export interface CompanionSetupLifecycleOptions {
@@ -447,6 +449,136 @@ export async function applyCompanionSetup(
   };
 }
 
+function findExecutable(command: string): string | null {
+  if (path.isAbsolute(command)) {
+    return fs.existsSync(command) ? command : null;
+  }
+  if (command.includes(path.sep)) {
+    const resolved = path.resolve(command);
+    return fs.existsSync(resolved) ? resolved : null;
+  }
+  const envPath = process.env.PATH || "";
+  const dirs = envPath.split(path.delimiter);
+  for (const dir of dirs) {
+    const candidate = path.join(dir, command);
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+async function probeCompanionMcp(
+  commandPath: string,
+  args: string[] = [],
+  timeoutMs: number = 2000
+): Promise<{
+  reachable: boolean;
+  protocol_version?: number;
+  tools?: CompanionToolDefinition[];
+}> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    let proc: any;
+    const finish = (result: {
+      reachable: boolean;
+      protocol_version?: number;
+      tools?: CompanionToolDefinition[];
+    }) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        if (proc) {
+          try {
+            proc.kill();
+          } catch {
+            // ignore
+          }
+        }
+        resolve(result);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      finish({ reachable: false });
+    }, timeoutMs);
+
+    try {
+      proc = spawn(commandPath, args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env },
+      });
+    } catch {
+      finish({ reachable: false });
+      return;
+    }
+
+    proc.on("error", () => {
+      finish({ reachable: false });
+    });
+
+    let buffer = "";
+    proc.stdout.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf-8");
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line.trim());
+          if (msg.id === 1 && msg.result) {
+            const listReq =
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "tools/list",
+                params: {},
+              }) + "\n";
+            proc.stdin.write(listReq);
+          } else if (msg.id === 2 && msg.result) {
+            const rawTools = msg.result.tools || [];
+            const tools: CompanionToolDefinition[] = rawTools.map((t: any) => ({
+              name: t.name,
+              inputSchema: t.inputSchema,
+              outputSchema: t.outputSchema,
+            }));
+            finish({
+              reachable: true,
+              protocol_version: 1,
+              tools,
+            });
+            return;
+          }
+        } catch {
+          // ignore non-JSON line
+        }
+      }
+    });
+
+    const initReq =
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "agent-config-health-checker", version: "0.1.0" },
+        },
+      }) + "\n";
+
+    try {
+      proc.stdin.write(initReq);
+    } catch {
+      finish({ reachable: false });
+    }
+  });
+}
+
 /**
  * Validate effective host state, MCP reachability, and semantic configuration (§14, §73, §76).
  */
@@ -501,55 +633,90 @@ export async function validateCompanionSetup(
     semanticConfigValid = true;
   }
 
-  // Strictly distinguish registration, configuration, reachability, and health (SPEC §32-§33, §79)
+  // Strictly distinguish registration, configuration, reachability, and health (SPEC §32-§33, §79, §5, §6)
   const isRegistered = inspection.registered;
   const isConfigured = semanticConfigValid;
   let isReachable = false;
   let isHealthy = false;
+  let probedTools: CompanionToolDefinition[] | undefined;
+  let probedProtocol: number | undefined;
 
-  if (isRegistered && isConfigured) {
-    // Check if host provides native verification, command executable verification, or adapter reachability
+  if (options?.reachable !== undefined) {
+    isReachable = options.reachable;
+  } else if (!isRegistered || !isConfigured) {
+    isReachable = false;
+  } else if (options?.tools !== undefined) {
+    // Explicitly provided tools (testing or simulated harness)
+    isReachable = true;
+  } else {
+    // Real probe of configured command
     const cmd = inspection.command;
     if (cmd) {
       const binName = cmd.trim().split(/\s+/)[0];
-      // If command is valid executable or in path or node/npx/agent-config
-      if (
-        binName === "agent-config" ||
-        binName === "node" ||
-        binName === "npx" ||
-        fs.existsSync(binName)
-      ) {
-        isReachable = true;
-        isHealthy = true;
-      } else {
-        // Unknown or custom command without verified path
+      const execPath = findExecutable(binName);
+      if (!execPath) {
         isReachable = false;
-        isHealthy = false;
+      } else {
+        const probe = await probeCompanionMcp(
+          execPath,
+          inspection.args || ["serve"]
+        );
+        isReachable = probe.reachable;
+        if (probe.tools) {
+          probedTools = probe.tools;
+        }
+        if (probe.protocol_version !== undefined) {
+          probedProtocol = probe.protocol_version;
+        }
       }
     } else {
-      // Registered in config, but command is absent or unknown => not reachable
       isReachable = false;
-      isHealthy = false;
     }
   }
 
-  // Evaluate companion health strictly if tools or protocol options are supplied
-  let healthResult: CompanionHealthCheckResult | undefined;
-  if (options?.tools !== undefined || options?.protocol_version !== undefined) {
-    healthResult = evaluateCompanionHealth({
-      protocol_version: options?.protocol_version ?? 1,
-      tools: options?.tools || [],
-      reachable: isReachable,
-    });
+  // Evaluate companion health strictly against all canonical invariants (§5, §6)
+  const toolsToEvaluate =
+    options?.tools !== undefined ? options.tools : (probedTools ?? []);
+  const protocolToEvaluate =
+    options?.protocol_version !== undefined
+      ? options.protocol_version
+      : (probedProtocol ?? (isReachable ? 1 : 0));
+
+  const healthResult = evaluateCompanionHealth({
+    protocol_version: protocolToEvaluate,
+    tools: toolsToEvaluate,
+    reachable: isReachable,
+  });
+
+  isHealthy = healthResult.healthy;
+
+  // If explicit tools, protocol, or reachable options were supplied, health failures invalidate the validation result
+  if (
+    options?.tools !== undefined ||
+    options?.protocol_version !== undefined ||
+    options?.reachable !== undefined
+  ) {
     if (!healthResult.healthy) {
-      isHealthy = false;
       errors.push(...healthResult.reasons, ...healthResult.schema_errors);
     }
   }
 
   mcpReachable = isReachable;
 
-  const isValid = adapterValidation.valid && isRegistered && isConfigured && errors.length === 0;
+  const isValid =
+    adapterValidation.valid &&
+    isRegistered &&
+    isConfigured &&
+    errors.length === 0;
+
+  let message = "";
+  if (!isValid) {
+    message = `Companion registration failed for host '${adapter.id}': ${errors.join("; ")}`;
+  } else if (!isHealthy) {
+    message = `Companion MCP server registered for host '${adapter.id}', but health check failed: ${healthResult.reasons.concat(healthResult.schema_errors).join("; ")}`;
+  } else {
+    message = `Companion MCP server registration validated and healthy for host '${adapter.id}' (registered: ${isRegistered}, configured: ${isConfigured}, reachable: ${isReachable}, healthy: ${isHealthy}).`;
+  }
 
   return {
     valid: isValid,
@@ -562,9 +729,7 @@ export async function validateCompanionSetup(
     healthy: isHealthy,
     mcp_reachable: isReachable,
     semantic_config_valid: isConfigured,
-    message: isValid
-      ? `Companion MCP server registration validated for host '${adapter.id}' (registered: ${isRegistered}, configured: ${isConfigured}, reachable: ${isReachable}).`
-      : `Companion validation failed for host '${adapter.id}': ${errors.join("; ")}`,
+    message,
     details: {
       inspection,
       adapter_validation: adapterValidation,

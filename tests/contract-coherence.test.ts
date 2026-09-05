@@ -209,9 +209,60 @@ describe("SPEC §67: Real Contract Coherence Automated Verification", () => {
   });
 
   it("verifies preview identity fields coherence (preview_id, preview_hash, diff, expires_at, target, baseline_hash)", async () => {
+    // Register mock adapter with evidenced model and save profile before preview (§3, §4)
+    const mockAdapter: HostAdapter = {
+      id: "mock-host",
+      identifyHost: async () => false,
+      inspectVersion: async () => ({
+        version: "1.0",
+        compatibility: "supported",
+        fail_closed_for_mutation: false,
+      }),
+      inspectCapabilities: async () => ({
+        host_id: "mock-host",
+        adapter_id: "mock-host",
+        observed_at: new Date().toISOString(),
+        available_models: ["test-model"],
+        supported_effort_values: ["low", "high"],
+        capabilities: {
+          subagents: { state: "unavailable" },
+          threads: { state: "unavailable" },
+          parallelism: { state: "unavailable" },
+          model_selection: { state: "available", scopes: ["current-session"] },
+        },
+      }),
+      renderConfiguration: async () => ({
+        preview_id: "preview-coherence-1",
+        mutation_targets: [path.join(workspaceDir, "config.json")],
+        diff: "+model = test-model",
+      }),
+      applyConfiguration: async () => ({
+        success: true,
+        preview_id: "preview-coherence-1",
+        applied_targets: [path.join(workspaceDir, "config.json")],
+        message: "Applied successfully",
+      }),
+      validateConfiguration: async () => ({ valid: true }),
+      inspectCompanionRegistration: async () => ({ registered: false }),
+      previewCompanionRegistration: async () => ({ supported: false, target_file: "", diff: "", mutation_targets: [] }),
+      applyCompanionRegistration: async () => ({ success: false }),
+      validateCompanionRegistration: async () => ({ valid: false }),
+    };
+    adapterRegistry.register(mockAdapter);
+
+    await profileStore.saveProfile({
+      ...sampleProfile,
+      host: { id: "mock-host", adapter: "mock-host" },
+      scope: { type: "project" as const, workspace: workspaceDir },
+    });
+
     const res = await client.callTool({
       name: "preview_configuration",
-      arguments: { config: validExecutionConfig, workspace: workspaceDir },
+      arguments: {
+        config: validExecutionConfig,
+        workspace: workspaceDir,
+        host_id: "mock-host",
+      },
     });
     expect(res.isError).toBeFalsy();
 
@@ -233,9 +284,59 @@ describe("SPEC §67: Real Contract Coherence Automated Verification", () => {
   });
 
   it("verifies apply identity fields coherence (success, preview_id, applied_targets, target, baseline_hash, message)", async () => {
+    const mockAdapter: HostAdapter = {
+      id: "mock-host-apply",
+      identifyHost: async () => false,
+      inspectVersion: async () => ({
+        version: "1.0",
+        compatibility: "supported",
+        fail_closed_for_mutation: false,
+      }),
+      inspectCapabilities: async () => ({
+        host_id: "mock-host-apply",
+        adapter_id: "mock-host-apply",
+        observed_at: new Date().toISOString(),
+        available_models: ["test-model"],
+        supported_effort_values: ["low", "high"],
+        capabilities: {
+          subagents: { state: "unavailable" },
+          threads: { state: "unavailable" },
+          parallelism: { state: "unavailable" },
+          model_selection: { state: "available", scopes: ["current-session"] },
+        },
+      }),
+      renderConfiguration: async () => ({
+        preview_id: "preview-coherence-2",
+        mutation_targets: [path.join(workspaceDir, "config.json")],
+        diff: "+model = test-model",
+      }),
+      applyConfiguration: async () => ({
+        success: true,
+        preview_id: "preview-coherence-2",
+        applied_targets: [path.join(workspaceDir, "config.json")],
+        message: "Applied successfully",
+      }),
+      validateConfiguration: async () => ({ valid: true }),
+      inspectCompanionRegistration: async () => ({ registered: false }),
+      previewCompanionRegistration: async () => ({ supported: false, target_file: "", diff: "", mutation_targets: [] }),
+      applyCompanionRegistration: async () => ({ success: false }),
+      validateCompanionRegistration: async () => ({ valid: false }),
+    };
+    adapterRegistry.register(mockAdapter);
+
+    await profileStore.saveProfile({
+      ...sampleProfile,
+      host: { id: "mock-host-apply", adapter: "mock-host-apply" },
+      scope: { type: "project" as const, workspace: workspaceDir },
+    });
+
     const previewRes = await client.callTool({
       name: "preview_configuration",
-      arguments: { config: validExecutionConfig, workspace: workspaceDir },
+      arguments: {
+        config: validExecutionConfig,
+        workspace: workspaceDir,
+        host_id: "mock-host-apply",
+      },
     });
     const previewData = JSON.parse((previewRes.content[0] as { type: string; text: string }).text);
 
