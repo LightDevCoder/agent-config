@@ -2,6 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import {
   HostAdapter,
   HostCapabilities,
@@ -10,6 +11,12 @@ import {
   RenderedFile,
   ApplyResult,
   ValidationResult,
+  HostVersionInfo,
+  HostReasoningOptions,
+  TopologyCapabilities,
+  CompanionRegistrationStatus,
+  CompanionRegistrationPreview,
+  ResolvedReasoningPolicy,
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
@@ -23,21 +30,34 @@ export class CodexAdapter implements HostAdapter {
   readonly id = "codex";
   readonly name = "Codex Adapter";
 
+  hasActiveRuntimeContext(_workspaceRoot?: string): boolean {
+    if (
+      (process.env.CODEX_THREAD_ID && process.env.CODEX_THREAD_ID !== "undefined") ||
+      (process.env.CODEX_SESSION_ID && process.env.CODEX_SESSION_ID !== "undefined") ||
+      (process.env.CODEX_WORKSPACE && process.env.CODEX_WORKSPACE !== "undefined")
+    ) {
+      return true;
+    }
+    if (process.env._ && path.basename(process.env._).toLowerCase().includes("codex")) {
+      return true;
+    }
+    if (process.title && path.basename(process.title).toLowerCase().includes("codex")) {
+      return true;
+    }
+    return false;
+  }
+
   async identifyHost(workspaceRoot?: string): Promise<boolean> {
+    if (this.hasActiveRuntimeContext(workspaceRoot)) {
+      return true;
+    }
+
     if (workspaceRoot) {
       const workspaceCodexDir = path.join(workspaceRoot, ".codex");
       const workspaceCodexToml = path.join(workspaceRoot, "codex.toml");
       if (fs.existsSync(workspaceCodexDir) || fs.existsSync(workspaceCodexToml)) {
         return true;
       }
-    }
-
-    if (
-      process.env.CODEX_THREAD_ID ||
-      process.env.CODEX_SESSION_ID ||
-      process.env.CODEX_WORKSPACE
-    ) {
-      return true;
     }
 
     if (process.env.CODEX_HOME && fs.existsSync(process.env.CODEX_HOME)) {
@@ -52,6 +72,82 @@ export class CodexAdapter implements HostAdapter {
     return false;
   }
 
+  async inspectVersion(workspaceRoot?: string): Promise<HostVersionInfo> {
+    let version = process.env.CODEX_VERSION;
+    let raw: string | undefined = version;
+
+    if (!version && workspaceRoot) {
+      const versionFile = path.join(workspaceRoot, ".codex", "version");
+      if (fs.existsSync(versionFile)) {
+        try {
+          raw = fs.readFileSync(versionFile, "utf-8").trim();
+          version = raw;
+        } catch {
+          // Skip
+        }
+      }
+    }
+
+    if (!version) {
+      const globalVersionFile = path.join(
+        process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+        "version"
+      );
+      if (fs.existsSync(globalVersionFile)) {
+        try {
+          raw = fs.readFileSync(globalVersionFile, "utf-8").trim();
+          version = raw;
+        } catch {
+          // Skip
+        }
+      }
+    }
+
+    if (!version) {
+      return {
+        version: undefined,
+        compatibility: "unknown-version",
+        fail_closed_for_mutation: true,
+        raw: undefined,
+      };
+    }
+
+    const normalized = version.trim();
+    if (normalized === "incompatible") {
+      return {
+        version: normalized,
+        compatibility: "incompatible",
+        fail_closed_for_mutation: true,
+        raw,
+      };
+    }
+
+    if (normalized.startsWith("0.") || normalized.startsWith("1.")) {
+      return {
+        version: normalized,
+        compatibility: "supported",
+        fail_closed_for_mutation: false,
+        raw,
+      };
+    }
+
+    if (normalized.startsWith("2.")) {
+      return {
+        version: normalized,
+        compatibility: "partially-supported",
+        fail_closed_for_mutation: false,
+        raw,
+      };
+    }
+
+    return {
+      version: normalized,
+      compatibility: "unknown-version",
+      fail_closed_for_mutation: true,
+      raw,
+    };
+  }
+
   async inspectCapabilities(workspaceRoot?: string): Promise<HostCapabilities> {
     const models = await this.inspectModels(workspaceRoot);
     const effortValues = await this.inspectEffortValues(workspaceRoot);
@@ -59,6 +155,7 @@ export class CodexAdapter implements HostAdapter {
     // Concurrency: derive strictly from config or environment, else state is unknown
     let concurrencyLimit: number | undefined;
     let concurrencyState: "available" | "unknown" = "unknown";
+    let concurrencyLocator: string | undefined;
 
     const configPath = this.resolveConfigPath(workspaceRoot);
     if (configPath && fs.existsSync(configPath)) {
@@ -68,6 +165,7 @@ export class CodexAdapter implements HostAdapter {
         if (concurrencyStr && !isNaN(parseInt(concurrencyStr, 10))) {
           concurrencyLimit = parseInt(concurrencyStr, 10);
           concurrencyState = "available";
+          concurrencyLocator = `${configPath} max_concurrency`;
         }
       } catch {
         // Skip
@@ -79,8 +177,75 @@ export class CodexAdapter implements HostAdapter {
       if (!isNaN(parsed) && parsed > 0) {
         concurrencyLimit = parsed;
         concurrencyState = "available";
+        concurrencyLocator = "CODEX_MAX_CONCURRENCY environment variable";
       }
     }
+
+    const reasoningState: "available" | "unknown" = effortValues.length > 0 ? "available" : "unknown";
+
+    // Subagents: inspect real evidence (§25)
+    let subagentsState: "available" | "unknown" = "unknown";
+    let subagentsLocator: string | undefined;
+
+    if (process.env.CODEX_SUBAGENTS === "1" || process.env.CODEX_SUBAGENTS === "true") {
+      subagentsState = "available";
+      subagentsLocator = "CODEX_SUBAGENTS environment variable";
+    } else if (workspaceRoot) {
+      const agentsDir = path.join(workspaceRoot, ".codex", "agents");
+      if (fs.existsSync(agentsDir)) {
+        subagentsState = "available";
+        subagentsLocator = agentsDir;
+      }
+    } else {
+      const globalAgentsDir = path.join(
+        process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+        "agents"
+      );
+      if (fs.existsSync(globalAgentsDir)) {
+        subagentsState = "available";
+        subagentsLocator = globalAgentsDir;
+      }
+    }
+
+    // Threads: inspect real evidence (§25)
+    let threadsState: "available" | "unknown" = "unknown";
+    let threadsLocator: string | undefined;
+
+    if (process.env.CODEX_THREAD_ID || process.env.CODEX_SESSION_ID) {
+      threadsState = "available";
+      threadsLocator = "active codex thread/session environment";
+    } else if (workspaceRoot) {
+      const sessionDirs = [
+        path.join(workspaceRoot, ".codex", "sessions"),
+        path.join(workspaceRoot, ".codex", "session.db"),
+        path.join(workspaceRoot, ".codex", "state.db"),
+      ];
+      for (const d of sessionDirs) {
+        if (fs.existsSync(d)) {
+          threadsState = "available";
+          threadsLocator = d;
+          break;
+        }
+      }
+    } else {
+      const globalCodexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+      const globalSessionDirs = [
+        path.join(globalCodexHome, "sessions"),
+        path.join(globalCodexHome, "session.db"),
+        path.join(globalCodexHome, "state.db"),
+      ];
+      for (const d of globalSessionDirs) {
+        if (fs.existsSync(d)) {
+          threadsState = "available";
+          threadsLocator = d;
+          break;
+        }
+      }
+    }
+
+    const modelSelectionState: "available" | "unknown" = models.length > 0 ? "available" : "unknown";
+    const perAgentModelSelectionState: "available" | "unknown" =
+      subagentsState === "available" ? "available" : "unknown";
 
     return {
       host_id: "codex",
@@ -90,51 +255,80 @@ export class CodexAdapter implements HostAdapter {
       platform: `${os.platform()}-${os.arch()}`,
       available_models: models,
       supported_effort_values: effortValues,
-      default_effort_value: effortValues.includes("high") ? "high" : effortValues[0],
+      default_effort_value:
+        effortValues.length > 0
+          ? effortValues.includes("high")
+            ? "high"
+            : effortValues[0]
+          : undefined,
       capabilities: {
         subagents: {
-          state: "available",
-          evidence: {
-            kind: "host-runtime",
-            locator: ".codex/agents",
-          },
+          state: subagentsState,
+          ...(subagentsState === "available"
+            ? {
+                evidence: {
+                  kind: "host-runtime",
+                  locator: subagentsLocator || ".codex/agents",
+                },
+              }
+            : {}),
         },
         threads: {
-          state: "available",
-          evidence: {
-            kind: "host-runtime",
-            locator: ".codex session db",
-          },
+          state: threadsState,
+          ...(threadsState === "available"
+            ? {
+                evidence: {
+                  kind: "host-runtime",
+                  locator: threadsLocator || ".codex session db",
+                },
+              }
+            : {}),
         },
         parallelism: {
-          state: "available",
-          evidence: {
-            kind: "host-runtime",
-            locator: "codex thread pool",
-          },
+          state: concurrencyState === "available" ? "available" : "unknown",
+          ...(concurrencyState === "available"
+            ? {
+                evidence: {
+                  kind: "host-runtime",
+                  locator: concurrencyLocator || "codex thread pool",
+                },
+              }
+            : {}),
         },
         model_selection: {
-          state: "available",
-          scopes: ["current-session", "new-session", "per-agent"],
-          evidence: {
-            kind: "host-config",
-            locator: configPath || ".codex/config.toml",
-          },
+          state: modelSelectionState,
+          ...(modelSelectionState === "available"
+            ? {
+                scopes: ["current-session", "new-session", "per-agent"],
+                evidence: {
+                  kind: "host-config",
+                  locator: configPath || ".codex/config.toml",
+                },
+              }
+            : {}),
         },
         per_agent_model_selection: {
-          state: "available",
-          evidence: {
-            kind: "host-config",
-            locator: ".codex/agents/*.toml",
-          },
+          state: perAgentModelSelectionState,
+          ...(perAgentModelSelectionState === "available"
+            ? {
+                evidence: {
+                  kind: "host-config",
+                  locator: subagentsLocator || ".codex/agents/*.toml",
+                },
+              }
+            : {}),
         },
         concurrency: {
           state: concurrencyState,
           max_concurrency: concurrencyLimit,
-          evidence: {
-            kind: "host-config",
-            locator: configPath || "environment",
-          },
+          ...(concurrencyState === "available"
+            ? {
+                evidence: {
+                  kind: "host-config",
+                  locator: concurrencyLocator || "environment",
+                },
+              }
+            : {}),
         },
         configuration_mutation: {
           state: "available",
@@ -145,40 +339,100 @@ export class CodexAdapter implements HostAdapter {
             locator: configPath || ".codex/config.toml",
           },
         },
+        reasoning: {
+          state: reasoningState,
+          ...(reasoningState === "available"
+            ? {
+                evidence: {
+                  kind: "host-config",
+                  locator: configPath || ".codex/config.toml",
+                },
+              }
+            : {}),
+        },
       },
     };
   }
 
   async inspectModels(workspaceRoot?: string): Promise<HostModel[]> {
     const models: HostModel[] = [];
-    const configPath = this.resolveConfigPath(workspaceRoot);
+    const seenIds = new Set<string>();
 
-    if (configPath && fs.existsSync(configPath)) {
-      try {
-        const content = fs.readFileSync(configPath, "utf-8");
-        const configuredModel = this.extractTomlString(content, "model");
-        if (configuredModel) {
-          models.push({
-            id: configuredModel,
-            label: configuredModel,
-            state: "available",
-            features: ["tools", "reasoning"],
-            evidence: {
-              kind: "host-config",
-              locator: configPath,
-            },
-          });
+    const checkConfig = (configPath: string) => {
+      if (fs.existsSync(configPath)) {
+        try {
+          const content = fs.readFileSync(configPath, "utf-8");
+          const configuredModel = this.extractTomlString(content, "model");
+          if (configuredModel && !seenIds.has(configuredModel)) {
+            seenIds.add(configuredModel);
+            models.push({
+              id: configuredModel,
+              label: configuredModel,
+              state: "available",
+              features: ["tools", "reasoning"],
+              evidence: {
+                kind: "host-config",
+                locator: configPath,
+              },
+            });
+          }
+
+          const supported = this.extractTomlArray(content, "supported_models");
+          if (supported) {
+            for (const sm of supported) {
+              if (!seenIds.has(sm)) {
+                seenIds.add(sm);
+                models.push({
+                  id: sm,
+                  label: sm,
+                  state: "available",
+                  features: ["tools", "reasoning"],
+                  evidence: {
+                    kind: "host-config",
+                    locator: configPath,
+                  },
+                });
+              }
+            }
+          }
+
+          const workerModel = this.extractTomlString(content, "worker_model");
+          if (workerModel && !seenIds.has(workerModel)) {
+            seenIds.add(workerModel);
+            models.push({
+              id: workerModel,
+              label: workerModel,
+              state: "available",
+              features: ["tools"],
+              evidence: {
+                kind: "host-config",
+                locator: configPath,
+              },
+            });
+          }
+        } catch {
+          // Skip
         }
+      }
+    };
 
-        // Also check if any agent configurations exist
-        const agentsDir = path.join(path.dirname(configPath), "agents");
-        if (fs.existsSync(agentsDir)) {
+    // 1. Check workspace config
+    if (workspaceRoot) {
+      const p = path.join(workspaceRoot, ".codex", "config.toml");
+      checkConfig(p);
+      const rootP = path.join(workspaceRoot, "codex.toml");
+      checkConfig(rootP);
+
+      const agentsDir = path.join(workspaceRoot, ".codex", "agents");
+      if (fs.existsSync(agentsDir)) {
+        try {
           const files = fs.readdirSync(agentsDir);
           for (const file of files) {
             if (file.endsWith(".toml")) {
               const agentContent = fs.readFileSync(path.join(agentsDir, file), "utf-8");
               const agentModel = this.extractTomlString(agentContent, "model");
-              if (agentModel && !models.some((m) => m.id === agentModel)) {
+              if (agentModel && !seenIds.has(agentModel)) {
+                seenIds.add(agentModel);
                 models.push({
                   id: agentModel,
                   label: agentModel,
@@ -192,9 +446,44 @@ export class CodexAdapter implements HostAdapter {
               }
             }
           }
+        } catch {
+          // Skip
         }
-      } catch {
-        // Skip
+      }
+    }
+
+    // 2. Check user config only when no workspaceRoot is supplied
+    if (!workspaceRoot) {
+      const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+      const globalConfig = path.join(codexHome, "config.toml");
+      checkConfig(globalConfig);
+
+      const globalAgentsDir = path.join(codexHome, "agents");
+      if (fs.existsSync(globalAgentsDir)) {
+        try {
+          const files = fs.readdirSync(globalAgentsDir);
+          for (const file of files) {
+            if (file.endsWith(".toml")) {
+              const agentContent = fs.readFileSync(path.join(globalAgentsDir, file), "utf-8");
+              const agentModel = this.extractTomlString(agentContent, "model");
+              if (agentModel && !seenIds.has(agentModel)) {
+                seenIds.add(agentModel);
+                models.push({
+                  id: agentModel,
+                  label: agentModel,
+                  state: "available",
+                  features: ["tools"],
+                  evidence: {
+                    kind: "host-config",
+                    locator: path.join(globalAgentsDir, file),
+                  },
+                });
+              }
+            }
+          }
+        } catch {
+          // Skip
+        }
       }
     }
 
@@ -202,7 +491,7 @@ export class CodexAdapter implements HostAdapter {
   }
 
   async inspectEffortValues(workspaceRoot?: string): Promise<string[]> {
-    const configPath = this.resolveConfigPath(workspaceRoot);
+    const configPath = this.resolveConfigPath(workspaceRoot, workspaceRoot ? "project" : undefined);
     if (configPath && fs.existsSync(configPath)) {
       try {
         const content = fs.readFileSync(configPath, "utf-8");
@@ -212,15 +501,292 @@ export class CodexAdapter implements HostAdapter {
         }
         const configuredEffort = this.extractTomlString(content, "model_reasoning_effort");
         if (configuredEffort) {
-          return ["low", "medium", configuredEffort].filter((v, i, a) => a.indexOf(v) === i);
+          return [configuredEffort];
         }
       } catch {
         // Skip
       }
     }
 
-    // Conservative baseline when unconfigured: low, medium, high (NEVER max unless evidenced)
-    return ["low", "medium", "high"];
+    return [];
+  }
+
+  async inspectReasoningOptions(
+    workspaceRoot?: string
+  ): Promise<HostReasoningOptions> {
+    const effortValues = await this.inspectEffortValues(workspaceRoot);
+    return {
+      native_field: "model_reasoning_effort",
+      supported_values: effortValues,
+      default_value:
+        effortValues.length > 0
+          ? effortValues.includes("high")
+            ? "high"
+            : effortValues[0]
+          : undefined,
+    };
+  }
+
+  async inspectExecutionTopologyCapabilities(
+    workspaceRoot?: string
+  ): Promise<TopologyCapabilities> {
+    const caps = await this.inspectCapabilities(workspaceRoot);
+    const parallelismAvailable = caps.capabilities.parallelism.state === "available";
+    const subagentsAvailable = caps.capabilities.subagents.state === "available";
+    return {
+      supports_single_session: true,
+      supports_subagents: subagentsAvailable,
+      supports_multi_agent: subagentsAvailable,
+      supports_parallel_execution: parallelismAvailable,
+      max_concurrency: caps.capabilities.concurrency?.max_concurrency,
+      scopes: subagentsAvailable
+        ? ["current-session", "new-session", "per-agent"]
+        : ["current-session", "new-session"],
+    };
+  }
+
+  async inspectCompanionRegistration(
+    workspaceRoot?: string,
+    scope?: "project" | "user"
+  ): Promise<CompanionRegistrationStatus> {
+    const workspace = workspaceRoot || process.cwd();
+
+    // Check project scope
+    if (scope !== "user" && workspaceRoot) {
+      const projectTarget = path.join(workspace, ".codex", "mcp.json");
+      if (fs.existsSync(projectTarget)) {
+        try {
+          const content = fs.readFileSync(projectTarget, "utf-8");
+          const parsed = JSON.parse(content);
+          const serverConfig = parsed.mcpServers?.["agent-config"];
+          if (serverConfig) {
+            return {
+              registered: true,
+              transport: "stdio",
+              scope: "project",
+              locator: projectTarget,
+              command: serverConfig.command,
+              args: serverConfig.args,
+              target_file: projectTarget,
+              details: serverConfig,
+            };
+          }
+        } catch {
+          // Skip parse error
+        }
+      }
+    }
+
+    // Check user scope
+    if (scope !== "project") {
+      const userCodexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+      const userTarget = path.join(userCodexHome, "mcp.json");
+      if (fs.existsSync(userTarget)) {
+        try {
+          const content = fs.readFileSync(userTarget, "utf-8");
+          const parsed = JSON.parse(content);
+          const serverConfig = parsed.mcpServers?.["agent-config"];
+          if (serverConfig) {
+            return {
+              registered: true,
+              transport: "stdio",
+              scope: "global",
+              locator: userTarget,
+              command: serverConfig.command,
+              args: serverConfig.args,
+              target_file: userTarget,
+              details: serverConfig,
+            };
+          }
+        } catch {
+          // Skip parse error
+        }
+      }
+    }
+
+    const defaultTarget =
+      scope === "user" || !workspaceRoot
+        ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "mcp.json")
+        : path.join(workspace, ".codex", "mcp.json");
+
+    return {
+      registered: false,
+      scope: scope === "user" || !workspaceRoot ? "global" : "project",
+      locator: defaultTarget,
+      target_file: defaultTarget,
+    };
+  }
+
+  async previewCompanionRegistration(
+    workspaceRoot?: string,
+    scope?: "project" | "user"
+  ): Promise<CompanionRegistrationPreview> {
+    const workspace = workspaceRoot || process.cwd();
+    const targetFile =
+      scope === "user" || !workspaceRoot
+        ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "mcp.json")
+        : path.join(workspace, ".codex", "mcp.json");
+
+    let existingContent: string | null = null;
+    let parsed: any = { mcpServers: {} };
+
+    if (fs.existsSync(targetFile)) {
+      existingContent = await fsp.readFile(targetFile, "utf-8");
+      try {
+        parsed = JSON.parse(existingContent);
+        if (!parsed.mcpServers || typeof parsed.mcpServers !== "object") {
+          parsed.mcpServers = {};
+        }
+      } catch {
+        return {
+          supported: false,
+          adapter_id: this.id,
+          host_id: this.id,
+          scope: scope === "user" || !workspaceRoot ? "global" : "project",
+          target_file: targetFile,
+          mutation_targets: [],
+          error: `Existing Codex MCP configuration file at '${targetFile}' is invalid JSON.`,
+        };
+      }
+    }
+
+    const baselineHash = existingContent
+      ? crypto.createHash("sha256").update(existingContent).digest("hex")
+      : null;
+
+    parsed.mcpServers = parsed.mcpServers || {};
+    parsed.mcpServers["agent-config"] = {
+      command: "agent-config",
+      args: ["serve"],
+    };
+
+    const newContent = JSON.stringify(parsed, null, 2) + "\n";
+    const diff = createUnifiedDiff(targetFile, existingContent, newContent);
+    const previewId = `preview-companion-codex-${Date.now()}`;
+    const previewHash = crypto.createHash("sha256").update(newContent).digest("hex");
+
+    return {
+      supported: true,
+      adapter_id: this.id,
+      host_id: this.id,
+      scope: scope === "user" || !workspaceRoot ? "global" : "project",
+      preview_id: previewId,
+      preview_hash: previewHash,
+      target_file: targetFile,
+      baseline_hash: baselineHash,
+      diff,
+      mutation_targets: [targetFile],
+      files: [{ path: targetFile, content: newContent }],
+    };
+  }
+
+  async applyCompanionRegistration(
+    previewHash: string,
+    workspaceRoot?: string
+  ): Promise<ApplyResult> {
+    const preview = await this.previewCompanionRegistration(workspaceRoot);
+    if (!preview.supported || !preview.files || preview.files.length === 0) {
+      return {
+        success: false,
+        preview_id: previewHash,
+        applied_targets: [],
+        error: preview.error || "Cannot apply companion registration for Codex.",
+      };
+    }
+
+    if (!preview.preview_hash || previewHash !== preview.preview_hash) {
+      return {
+        success: false,
+        preview_id: previewHash,
+        applied_targets: [],
+        error: `Companion registration preview hash mismatch: expected ${preview.preview_hash}, got ${previewHash}.`,
+      };
+    }
+
+    const appliedTargets: string[] = [];
+    for (const file of preview.files) {
+      await fsp.mkdir(path.dirname(file.path), { recursive: true });
+      await fsp.writeFile(file.path, file.content, "utf-8");
+      appliedTargets.push(file.path);
+    }
+
+    return {
+      success: true,
+      preview_id: previewHash,
+      applied_targets: appliedTargets,
+      message: "Codex companion registration applied successfully.",
+    };
+  }
+
+  async validateCompanionRegistration(
+    workspaceRoot?: string
+  ): Promise<ValidationResult> {
+    const status = await this.inspectCompanionRegistration(workspaceRoot);
+    return {
+      valid: status.registered,
+      workspace: workspaceRoot,
+      message: status.registered
+        ? "Codex companion MCP server registration validated successfully."
+        : "Codex companion MCP server is not registered.",
+    };
+  }
+
+  async previewConfiguration(
+    plan: ExecutionConfig,
+    profile?: AgentProfile,
+    workspaceRoot?: string
+  ): Promise<RenderedConfiguration> {
+    return this.renderConfiguration(plan, profile, workspaceRoot);
+  }
+
+  async resolveReasoningPolicy(
+    policy: string,
+    _modelId?: string,
+    workspaceRoot?: string
+  ): Promise<ResolvedReasoningPolicy | undefined> {
+    const options = await this.inspectReasoningOptions(workspaceRoot);
+    const supported = options.supported_values;
+    const normalized = policy.toLowerCase().trim();
+
+    let resolvedValue: string | undefined;
+
+    if (supported.length > 0) {
+      if (normalized === "highest-supported") {
+        if (supported.includes("xhigh")) resolvedValue = "xhigh";
+        else if (supported.includes("high")) resolvedValue = "high";
+        else resolvedValue = supported[supported.length - 1];
+      } else if (normalized === "lowest-sufficient" || normalized === "lowest-supported") {
+        if (supported.includes("low")) resolvedValue = "low";
+        else resolvedValue = supported[0];
+      } else if (normalized === "configured") {
+        resolvedValue = options.default_value || supported[0];
+      } else if (supported.includes(policy)) {
+        resolvedValue = policy;
+      } else {
+        const match = supported.find((v) => v.toLowerCase() === normalized);
+        if (match) resolvedValue = match;
+      }
+    } else {
+      const standardEfforts = ["none", "low", "medium", "high", "xhigh"];
+      if (normalized === "highest-supported") {
+        resolvedValue = "high";
+      } else if (normalized === "lowest-sufficient" || normalized === "lowest-supported") {
+        resolvedValue = "low";
+      } else if (normalized === "configured") {
+        resolvedValue = "medium";
+      } else if (standardEfforts.includes(normalized)) {
+        resolvedValue = normalized;
+      }
+    }
+
+    if (!resolvedValue) {
+      return undefined;
+    }
+
+    return {
+      host_field: "model_reasoning_effort",
+      host_value: resolvedValue,
+    };
   }
 
   async renderConfiguration(
@@ -236,15 +802,24 @@ export class CodexAdapter implements HostAdapter {
     const targetModel =
       plan.execution?.model ||
       plan.controller?.model ||
-      profile?.single_model?.model ||
-      "default";
+      profile?.single_model?.model;
+
+    if (!targetModel) {
+      throw new Error(
+        "Execution plan or profile does not specify a model for execution."
+      );
+    }
 
     const targetEffort =
       plan.execution?.effort ||
+      plan.execution?.effort_policy ||
       plan.controller?.effort ||
-      (profile?.single_model?.execution_effort && "value" in profile.single_model.execution_effort
-        ? profile.single_model.execution_effort.value
-        : "high");
+      plan.controller?.effort_policy ||
+      (profile?.single_model?.execution_effort
+        ? "value" in profile.single_model.execution_effort
+          ? profile.single_model.execution_effort.value
+          : profile.single_model.execution_effort.policy
+        : undefined);
 
     let existingContent: string | null = null;
     if (fs.existsSync(configTomlPath)) {
@@ -253,11 +828,13 @@ export class CodexAdapter implements HostAdapter {
 
     let newConfigContent = existingContent || "";
     newConfigContent = this.updateTomlKeyValue(newConfigContent, "model", targetModel);
-    newConfigContent = this.updateTomlKeyValue(
-      newConfigContent,
-      "model_reasoning_effort",
-      targetEffort
-    );
+    if (targetEffort) {
+      newConfigContent = this.updateTomlKeyValue(
+        newConfigContent,
+        "model_reasoning_effort",
+        targetEffort
+      );
+    }
 
     const files: RenderedFile[] = [
       {
@@ -277,10 +854,13 @@ export class CodexAdapter implements HostAdapter {
           existingAgentContent = await fsp.readFile(agentFilePath, "utf-8");
         }
 
-        const newAgentContent =
+        const itemEffort = item.effort || item.effort_policy;
+        let newAgentContent =
           `name = "${item.ticket_id}"\n` +
-          `model = "${item.model}"\n` +
-          `model_reasoning_effort = "${item.effort}"\n`;
+          `model = "${item.model}"\n`;
+        if (itemEffort) {
+          newAgentContent += `model_reasoning_effort = "${itemEffort}"\n`;
+        }
 
         files.push({
           path: agentFilePath,
@@ -315,6 +895,15 @@ export class CodexAdapter implements HostAdapter {
       };
     }
 
+    if (rendered.preview_id && previewId !== rendered.preview_id) {
+      return {
+        success: false,
+        preview_id: previewId,
+        applied_targets: [],
+        error: `Preview ID mismatch: expected ${rendered.preview_id}, got ${previewId}.`,
+      };
+    }
+
     const appliedTargets: string[] = [];
     for (const file of rendered.files) {
       await fsp.mkdir(path.dirname(file.path), { recursive: true });
@@ -335,7 +924,7 @@ export class CodexAdapter implements HostAdapter {
     workspaceRoot?: string
   ): Promise<ValidationResult> {
     const workspace = workspaceRoot || process.cwd();
-    const configTomlPath = path.join(workspace, ".codex", "config.toml");
+    const configTomlPath = this.resolveConfigPath(workspace) || path.join(workspace, ".codex", "config.toml");
 
     if (!fs.existsSync(configTomlPath)) {
       return {
@@ -353,7 +942,10 @@ export class CodexAdapter implements HostAdapter {
     const expectedModel =
       expected.execution?.model || expected.controller?.model;
     const expectedEffort =
-      expected.execution?.effort || expected.controller?.effort;
+      expected.execution?.effort ||
+      expected.execution?.effort_policy ||
+      expected.controller?.effort ||
+      expected.controller?.effort_policy;
 
     const errors: string[] = [];
     if (expectedModel && actualModel !== expectedModel) {
@@ -368,10 +960,21 @@ export class CodexAdapter implements HostAdapter {
       );
     }
 
-    // If work items, validate agent files
+    // If work items, validate agent files (§74: validate BOTH worker model AND worker reasoning effort)
     if (expected.work_items) {
       for (const item of expected.work_items) {
-        const agentPath = path.join(workspace, ".codex", "agents", `${item.ticket_id}.toml`);
+        let agentPath = path.join(workspace, ".codex", "agents", `${item.ticket_id}.toml`);
+        if (!fs.existsSync(agentPath)) {
+          const userAgentsPath = path.join(
+            process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+            "agents",
+            `${item.ticket_id}.toml`
+          );
+          if (fs.existsSync(userAgentsPath)) {
+            agentPath = userAgentsPath;
+          }
+        }
+
         if (!fs.existsSync(agentPath)) {
           errors.push(`Missing work item agent config: ${agentPath}`);
         } else {
@@ -381,6 +984,17 @@ export class CodexAdapter implements HostAdapter {
             errors.push(
               `Agent '${item.ticket_id}' model mismatch: expected '${item.model}', actual '${agentModel}'`
             );
+          }
+
+          // Worker reasoning effort validation (§74)
+          const itemEffort = item.effort || item.effort_policy;
+          if (itemEffort) {
+            const agentEffort = this.extractTomlString(agentContent, "model_reasoning_effort");
+            if (agentEffort !== itemEffort) {
+              errors.push(
+                `Agent '${item.ticket_id}' reasoning effort mismatch: expected '${itemEffort}', actual '${agentEffort}'`
+              );
+            }
           }
         }
       }
@@ -397,12 +1011,21 @@ export class CodexAdapter implements HostAdapter {
     };
   }
 
-  private resolveConfigPath(workspaceRoot?: string): string | null {
+  resolveConfigPath(workspaceRoot?: string, scope?: "project" | "user"): string | null {
+    if (scope === "user") {
+      const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+      const p = path.join(codexHome, "config.toml");
+      return fs.existsSync(p) ? p : null;
+    }
+
     if (workspaceRoot) {
       const p = path.join(workspaceRoot, ".codex", "config.toml");
       if (fs.existsSync(p)) return p;
+      const rootToml = path.join(workspaceRoot, "codex.toml");
+      if (fs.existsSync(rootToml)) return rootToml;
       return null;
     }
+
     const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
     const p = path.join(codexHome, "config.toml");
     if (fs.existsSync(p)) return p;

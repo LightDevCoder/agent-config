@@ -6,7 +6,8 @@ import os from "node:os";
 import { CodexAdapter } from "../src/adapters/codex/index.js";
 import { OpenCodeAdapter } from "../src/adapters/opencode/index.js";
 import { GenericAdapter } from "../src/adapters/generic/index.js";
-import { AdapterRegistry } from "../src/adapters/registry.js";
+import { AdapterRegistry, AmbiguousHostError } from "../src/adapters/registry.js";
+import { resolveHostReasoningPolicy } from "../src/adapters/contract.js";
 import { ExecutionConfig, AgentProfile } from "../src/profile/schema.js";
 
 describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
@@ -47,34 +48,102 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
       expect(validStates).toContain(caps.capabilities.configuration_mutation?.state);
     });
 
-    it("Codex adapter reports available capabilities backed by evidence", async () => {
+    it("Codex adapter reports unknown for unconfirmed concurrency, effort, and unevidenced capabilities", async () => {
       const adapter = new CodexAdapter();
       const caps = await adapter.inspectCapabilities(workspaceDir);
 
       expect(caps.host_id).toBe("codex");
-      expect(caps.capabilities.subagents.state).toBe("available");
-      expect(caps.capabilities.threads.state).toBe("available");
-      expect(caps.capabilities.parallelism.state).toBe("available");
-      expect(caps.capabilities.model_selection.state).toBe("available");
-      expect(caps.capabilities.per_agent_model_selection?.state).toBe("available");
+      expect(caps.capabilities.subagents.state).toBe("unknown");
+      expect(caps.capabilities.threads.state).toBe("unknown");
+      expect(caps.capabilities.parallelism.state).toBe("unknown");
+      expect(caps.capabilities.concurrency?.state).toBe("unknown");
+      expect(caps.capabilities.model_selection.state).toBe("unknown");
+      expect(caps.capabilities.per_agent_model_selection?.state).toBe("unknown");
       expect(caps.capabilities.configuration_mutation?.state).toBe("available");
       expect(caps.capabilities.configuration_mutation?.supports_native_files).toBe(true);
-      expect(caps.supported_effort_values).toEqual(["low", "medium", "high"]);
+      expect(caps.supported_effort_values).toEqual([]);
+      expect(caps.capabilities.reasoning?.state).toBe("unknown");
     });
 
-    it("OpenCode adapter reports available capabilities backed by evidence", async () => {
+    it("Codex adapter reports available for subagents, threads, and models when evidenced", async () => {
+      const codexDir = path.join(workspaceDir, ".codex");
+      await fsp.mkdir(path.join(codexDir, "agents"), { recursive: true });
+      await fsp.mkdir(path.join(codexDir, "sessions"), { recursive: true });
+      await fsp.writeFile(
+        path.join(codexDir, "config.toml"),
+        'model = "gpt-4o"\n',
+        "utf-8"
+      );
+
+      const adapter = new CodexAdapter();
+      const caps = await adapter.inspectCapabilities(workspaceDir);
+
+      expect(caps.capabilities.subagents.state).toBe("available");
+      expect(caps.capabilities.threads.state).toBe("available");
+      expect(caps.capabilities.model_selection.state).toBe("available");
+      expect(caps.capabilities.per_agent_model_selection?.state).toBe("available");
+    });
+
+    it("OpenCode adapter reports unknown for unconfirmed concurrency and effort, and available for evidenced capabilities", async () => {
       const adapter = new OpenCodeAdapter();
       const caps = await adapter.inspectCapabilities(workspaceDir);
 
       expect(caps.host_id).toBe("opencode");
       expect(caps.capabilities.subagents.state).toBe("available");
       expect(caps.capabilities.threads.state).toBe("available");
-      expect(caps.capabilities.parallelism.state).toBe("available");
+      expect(caps.capabilities.parallelism.state).toBe("unknown");
+      expect(caps.capabilities.concurrency?.state).toBe("unknown");
       expect(caps.capabilities.model_selection.state).toBe("available");
       expect(caps.capabilities.per_agent_model_selection?.state).toBe("available");
       expect(caps.capabilities.configuration_mutation?.state).toBe("available");
       expect(caps.capabilities.configuration_mutation?.supports_native_files).toBe(true);
+      expect(caps.supported_effort_values).toEqual([]);
+      expect(caps.capabilities.reasoning?.state).toBe("unknown");
+    });
+
+    it("Codex adapter reports available parallelism and reasoning when evidenced in host config", async () => {
+      const codexDir = path.join(workspaceDir, ".codex");
+      await fsp.mkdir(codexDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(codexDir, "config.toml"),
+        'max_concurrency = 4\nsupported_effort_values = ["low", "medium", "high"]\n',
+        "utf-8"
+      );
+
+      const adapter = new CodexAdapter();
+      const caps = await adapter.inspectCapabilities(workspaceDir);
+
+      expect(caps.capabilities.parallelism.state).toBe("available");
+      expect(caps.capabilities.concurrency?.state).toBe("available");
+      expect(caps.capabilities.concurrency?.max_concurrency).toBe(4);
+      expect(caps.capabilities.reasoning?.state).toBe("available");
       expect(caps.supported_effort_values).toEqual(["low", "medium", "high"]);
+    });
+
+    it("OpenCode adapter reports available parallelism and reasoning when evidenced in host config", async () => {
+      await fsp.writeFile(
+        path.join(workspaceDir, "opencode.json"),
+        JSON.stringify({
+          max_concurrency: 6,
+          provider: {
+            "test-prov": {
+              models: {
+                "model-1": { variants: ["fast", "deep"] },
+              },
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      const adapter = new OpenCodeAdapter();
+      const caps = await adapter.inspectCapabilities(workspaceDir);
+
+      expect(caps.capabilities.parallelism.state).toBe("available");
+      expect(caps.capabilities.concurrency?.state).toBe("available");
+      expect(caps.capabilities.concurrency?.max_concurrency).toBe(6);
+      expect(caps.capabilities.reasoning?.state).toBe("available");
+      expect(caps.supported_effort_values).toEqual(["fast", "deep"]);
     });
   });
 
@@ -438,6 +507,16 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
 
       expect(ids).toContain("codex");
       expect(ids).toContain("opencode");
+      expect(ids).toContain("claude-code");
+      expect(ids).toContain("copilot-cli");
+      expect(ids).toContain("gemini-cli");
+      expect(ids).toContain("cursor");
+      expect(ids).toContain("dsh");
+      expect(ids).toContain("grok-build");
+      expect(ids).toContain("amp");
+      expect(ids).toContain("windsurf");
+      expect(ids).toContain("cline");
+      expect(ids).toContain("roo-code");
       expect(ids).toContain("generic");
     });
 
@@ -467,6 +546,446 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
 
       const resolved = await registry.resolveAdapter(workspaceDir);
       expect(resolved.id).toBe("codex");
+    });
+
+    it("resolves Gemini CLI adapter when workspace has .gemini directory", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.mkdir(path.join(workspaceDir, ".gemini"), { recursive: true });
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("gemini-cli");
+    });
+
+    it("resolves Cursor adapter when workspace has .cursor directory", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.mkdir(path.join(workspaceDir, ".cursor"), { recursive: true });
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("cursor");
+    });
+
+    it("resolves DSH adapter when workspace has dsh.config.json file", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.writeFile(path.join(workspaceDir, "dsh.config.json"), "{}", "utf-8");
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("dsh");
+    });
+
+    it("resolves Grok Build adapter when workspace has .grok directory", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.mkdir(path.join(workspaceDir, ".grok"), { recursive: true });
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("grok-build");
+    });
+
+    it("resolves Amp adapter when workspace has .amp directory", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.mkdir(path.join(workspaceDir, ".amp"), { recursive: true });
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("amp");
+    });
+
+    it("resolves Windsurf adapter when workspace has .windsurf directory", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.mkdir(path.join(workspaceDir, ".windsurf"), { recursive: true });
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("windsurf");
+    });
+
+    it("resolves Cline adapter when workspace has .cline directory", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.mkdir(path.join(workspaceDir, ".cline"), { recursive: true });
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("cline");
+    });
+
+    it("resolves Roo Code adapter when workspace has .roo directory", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.mkdir(path.join(workspaceDir, ".roo"), { recursive: true });
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("roo-code");
+    });
+  });
+
+  describe("Adapter Contract v1: Version Inspection & Fail-Closed Compatibility (§21, §22)", () => {
+    it("reports unknown-version and enforces fail_closed_for_mutation when version is unevidenced", async () => {
+      const codex = new CodexAdapter();
+      const opencode = new OpenCodeAdapter();
+
+      const codexVer = await codex.inspectVersion(workspaceDir);
+      expect(codexVer.compatibility).toBe("unknown-version");
+      expect(codexVer.fail_closed_for_mutation).toBe(true);
+
+      const opencodeVer = await opencode.inspectVersion(workspaceDir);
+      expect(opencodeVer.compatibility).toBe("unknown-version");
+      expect(opencodeVer.fail_closed_for_mutation).toBe(true);
+    });
+
+    it("classifies version compatibility and relaxes fail-closed mutation for supported versions", async () => {
+      const codex = new CodexAdapter();
+      const opencode = new OpenCodeAdapter();
+
+      const origCodexVer = process.env.CODEX_VERSION;
+      const origOpencodeVer = process.env.OPENCODE_VERSION;
+      try {
+        process.env.CODEX_VERSION = "0.5.2";
+        process.env.OPENCODE_VERSION = "1.2.0";
+
+        const codexVer = await codex.inspectVersion(workspaceDir);
+        expect(codexVer.version).toBe("0.5.2");
+        expect(codexVer.compatibility).toBe("supported");
+        expect(codexVer.fail_closed_for_mutation).toBe(false);
+
+        const opencodeVer = await opencode.inspectVersion(workspaceDir);
+        expect(opencodeVer.version).toBe("1.2.0");
+        expect(opencodeVer.compatibility).toBe("supported");
+        expect(opencodeVer.fail_closed_for_mutation).toBe(false);
+      } finally {
+        if (origCodexVer !== undefined) {
+          process.env.CODEX_VERSION = origCodexVer;
+        } else {
+          delete process.env.CODEX_VERSION;
+        }
+        if (origOpencodeVer !== undefined) {
+          process.env.OPENCODE_VERSION = origOpencodeVer;
+        } else {
+          delete process.env.OPENCODE_VERSION;
+        }
+      }
+    });
+
+    it("enforces fail-closed mutation for incompatible versions while allowing read-only inspection", async () => {
+      const codex = new CodexAdapter();
+      const origCodexVer = process.env.CODEX_VERSION;
+      try {
+        process.env.CODEX_VERSION = "incompatible";
+        const ver = await codex.inspectVersion(workspaceDir);
+        expect(ver.compatibility).toBe("incompatible");
+        expect(ver.fail_closed_for_mutation).toBe(true);
+
+        // Read-only inspection still works
+        const caps = await codex.inspectCapabilities(workspaceDir);
+        expect(caps.host_id).toBe("codex");
+      } finally {
+        if (origCodexVer !== undefined) {
+          process.env.CODEX_VERSION = origCodexVer;
+        } else {
+          delete process.env.CODEX_VERSION;
+        }
+      }
+    });
+
+    it("Generic adapter reports supported compatibility but enforces fail_closed_for_mutation", async () => {
+      const generic = new GenericAdapter();
+      const ver = await generic.inspectVersion(workspaceDir);
+      expect(ver.compatibility).toBe("supported");
+      expect(ver.fail_closed_for_mutation).toBe(true);
+    });
+  });
+
+  describe("Adapter Contract v1: Reasoning Options & Abstract Policy Resolution (§11, §12)", () => {
+    it("reports host-native reasoning field without hardcoding effort globally", async () => {
+      const codex = new CodexAdapter();
+      const opencode = new OpenCodeAdapter();
+      const generic = new GenericAdapter();
+
+      const codexOptions = await codex.inspectReasoningOptions(workspaceDir);
+      expect(codexOptions.native_field).toBe("model_reasoning_effort");
+
+      const opencodeOptions = await opencode.inspectReasoningOptions(workspaceDir);
+      expect(opencodeOptions.native_field).toBe("variant");
+
+      const genericOptions = await generic.inspectReasoningOptions(workspaceDir);
+      expect(genericOptions.native_field).toBe("reasoning");
+      expect(genericOptions.supported_values).toEqual([]);
+    });
+
+    it("resolves abstract reasoning policies to host-native representations for Codex", async () => {
+      const codex = new CodexAdapter();
+
+      const high = await codex.resolveReasoningPolicy("highest-supported", undefined, workspaceDir);
+      expect(high).toEqual({
+        host_field: "model_reasoning_effort",
+        host_value: "high",
+      });
+
+      const low = await codex.resolveReasoningPolicy("lowest-sufficient", undefined, workspaceDir);
+      expect(low).toEqual({
+        host_field: "model_reasoning_effort",
+        host_value: "low",
+      });
+
+      const configured = await codex.resolveReasoningPolicy("configured", undefined, workspaceDir);
+      expect(configured).toEqual({
+        host_field: "model_reasoning_effort",
+        host_value: "medium",
+      });
+    });
+
+    it("resolves abstract reasoning policies to variants for OpenCode models", async () => {
+      const opencode = new OpenCodeAdapter();
+      await fsp.writeFile(
+        path.join(workspaceDir, "opencode.json"),
+        JSON.stringify({
+          model: "openai/o3-mini",
+          provider: {
+            openai: {
+              models: {
+                "o3-mini": {
+                  variants: ["low", "medium", "high", "max"],
+                },
+              },
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      const high = await opencode.resolveReasoningPolicy(
+        "highest-supported",
+        "openai/o3-mini",
+        workspaceDir
+      );
+      expect(high).toEqual({
+        host_field: "variant",
+        host_value: "max",
+      });
+
+      const low = await opencode.resolveReasoningPolicy(
+        "lowest-sufficient",
+        "openai/o3-mini",
+        workspaceDir
+      );
+      expect(low).toEqual({
+        host_field: "variant",
+        host_value: "low",
+      });
+    });
+
+    it("resolveHostReasoningPolicy helper functions host-neutrally across all adapters", async () => {
+      const codex = new CodexAdapter();
+      const generic = new GenericAdapter();
+
+      const codexResolved = await resolveHostReasoningPolicy(
+        codex,
+        "highest-supported",
+        undefined,
+        workspaceDir
+      );
+      expect(codexResolved?.host_field).toBe("model_reasoning_effort");
+      expect(codexResolved?.host_value).toBe("high");
+
+      const genericResolved = await resolveHostReasoningPolicy(
+        generic,
+        "highest-supported",
+        undefined,
+        workspaceDir
+      );
+      expect(genericResolved).toBeUndefined();
+    });
+  });
+
+  describe("Adapter Contract v1: Execution Topology Capabilities (§19)", () => {
+    it("reports authentic execution topology capabilities for Codex when evidenced", async () => {
+      const codexDir = path.join(workspaceDir, ".codex");
+      await fsp.mkdir(path.join(codexDir, "agents"), { recursive: true });
+
+      const codex = new CodexAdapter();
+      const topology = await codex.inspectExecutionTopologyCapabilities(workspaceDir);
+
+      expect(topology.supports_single_session).toBe(true);
+      expect(topology.supports_subagents).toBe(true);
+      expect(topology.supports_multi_agent).toBe(true);
+      expect(topology.scopes).toContain("per-agent");
+    });
+
+    it("reports subagents as unsupported in topology when unevidenced for Codex", async () => {
+      const codex = new CodexAdapter();
+      const topology = await codex.inspectExecutionTopologyCapabilities(workspaceDir);
+
+      expect(topology.supports_single_session).toBe(true);
+      expect(topology.supports_subagents).toBe(false);
+      expect(topology.supports_multi_agent).toBe(false);
+      expect(topology.scopes).toEqual(["current-session", "new-session"]);
+    });
+
+    it("reports authentic execution topology capabilities for OpenCode", async () => {
+      const opencode = new OpenCodeAdapter();
+      const topology = await opencode.inspectExecutionTopologyCapabilities(workspaceDir);
+
+      expect(topology.supports_single_session).toBe(true);
+      expect(topology.supports_subagents).toBe(true);
+      expect(topology.supports_multi_agent).toBe(true);
+      expect(topology.scopes).toContain("per-agent");
+    });
+
+    it("reports plan-only single-session execution topology for Generic adapter", async () => {
+      const generic = new GenericAdapter();
+      const topology = await generic.inspectExecutionTopologyCapabilities(workspaceDir);
+
+      expect(topology.supports_single_session).toBe(true);
+      expect(topology.supports_subagents).toBe(false);
+      expect(topology.supports_multi_agent).toBe(false);
+      expect(topology.supports_parallel_execution).toBe(false);
+      expect(topology.scopes).toEqual(["current-session"]);
+    });
+  });
+
+  describe("Adapter Contract v1: Companion Registration Lifecycle & Safe Mutation (§19, §71)", () => {
+    it("manages Codex companion registration preview, apply, and validate lifecycle", async () => {
+      const codex = new CodexAdapter();
+
+      // Initial status: not registered
+      const initialStatus = await codex.inspectCompanionRegistration(workspaceDir);
+      expect(initialStatus.registered).toBe(false);
+
+      // Preview: generates diff and preview_hash
+      const preview = await codex.previewCompanionRegistration(workspaceDir);
+      expect(preview.supported).toBe(true);
+      expect(preview.preview_hash).toBeDefined();
+      expect(preview.diff).toContain("agent-config");
+      expect(preview.mutation_targets).toHaveLength(1);
+
+      // Apply: creates target file
+      const applyResult = await codex.applyCompanionRegistration(
+        preview.preview_hash!,
+        workspaceDir
+      );
+      expect(applyResult.success).toBe(true);
+      expect(applyResult.applied_targets).toHaveLength(1);
+
+      // Validate: confirmed registered
+      const validation = await codex.validateCompanionRegistration(workspaceDir);
+      expect(validation.valid).toBe(true);
+
+      const postStatus = await codex.inspectCompanionRegistration(workspaceDir);
+      expect(postStatus.registered).toBe(true);
+    });
+
+    it("manages OpenCode companion registration preview, apply, and validate lifecycle", async () => {
+      const opencode = new OpenCodeAdapter();
+      await fsp.writeFile(
+        path.join(workspaceDir, "opencode.json"),
+        JSON.stringify({ model: "test-model" }),
+        "utf-8"
+      );
+
+      const initialStatus = await opencode.inspectCompanionRegistration(workspaceDir);
+      expect(initialStatus.registered).toBe(false);
+
+      const preview = await opencode.previewCompanionRegistration(workspaceDir);
+      expect(preview.supported).toBe(true);
+      expect(preview.preview_hash).toBeDefined();
+      expect(preview.diff).toContain("agent-config");
+
+      const applyResult = await opencode.applyCompanionRegistration(
+        preview.preview_hash!,
+        workspaceDir
+      );
+      expect(applyResult.success).toBe(true);
+
+      const validation = await opencode.validateCompanionRegistration(workspaceDir);
+      expect(validation.valid).toBe(true);
+    });
+
+    it("explicitly rejects companion registration mutation on Generic adapter", async () => {
+      const generic = new GenericAdapter();
+
+      const preview = await generic.previewCompanionRegistration(workspaceDir);
+      expect(preview.supported).toBe(false);
+      expect(preview.mutation_targets).toHaveLength(0);
+      expect(preview.error).toBeDefined();
+
+      const applyResult = await generic.applyCompanionRegistration("hash-123", workspaceDir);
+      expect(applyResult.success).toBe(false);
+      expect(applyResult.error).toBeDefined();
+
+      const validation = await generic.validateCompanionRegistration(workspaceDir);
+      expect(validation.valid).toBe(false);
+    });
+  });
+
+  describe("Host Identification & Disambiguation (§20)", () => {
+    it("detectAllCandidates enumerates all matching candidates without fallback", async () => {
+      const registry = new AdapterRegistry();
+
+      // Empty workspace: 0 candidates
+      const emptyCandidates = await registry.detectAllCandidates(workspaceDir);
+      expect(emptyCandidates).toEqual([]);
+
+      // Workspace with both .codex and opencode.json
+      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await fsp.writeFile(path.join(workspaceDir, "opencode.json"), "{}", "utf-8");
+
+      const multiCandidates = await registry.detectAllCandidates(workspaceDir);
+      expect(multiCandidates).toContain("codex");
+      expect(multiCandidates).toContain("opencode");
+    });
+
+    it("disambiguates multiple installed harnesses using active runtime context (environment)", async () => {
+      const registry = new AdapterRegistry();
+
+      // Setup workspace with both harnesses installed
+      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await fsp.writeFile(path.join(workspaceDir, "opencode.json"), "{}", "utf-8");
+
+      const origOpenCodeSession = process.env.OPENCODE_SESSION_ID;
+      try {
+        process.env.OPENCODE_SESSION_ID = "active-opencode-session";
+
+        const resolved = await registry.resolveAdapter(workspaceDir);
+        expect(resolved.id).toBe("opencode");
+      } finally {
+        if (origOpenCodeSession !== undefined) {
+          process.env.OPENCODE_SESSION_ID = origOpenCodeSession;
+        } else {
+          delete process.env.OPENCODE_SESSION_ID;
+        }
+      }
+    });
+
+    it("disambiguates multiple installed harnesses using disambiguation handler callback", async () => {
+      const registry = new AdapterRegistry();
+
+      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await fsp.writeFile(path.join(workspaceDir, "opencode.json"), "{}", "utf-8");
+
+      let promptCandidates: string[] = [];
+      const resolved = await registry.resolveAdapter(workspaceDir, undefined, {
+        disambiguate: async (candidates) => {
+          promptCandidates = candidates;
+          return "codex";
+        },
+      });
+
+      expect(promptCandidates).toContain("codex");
+      expect(promptCandidates).toContain("opencode");
+      expect(resolved.id).toBe("codex");
+    });
+
+    it("throws AmbiguousHostError when multiple harnesses match and no runtime or handler resolves it", async () => {
+      const registry = new AdapterRegistry();
+
+      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await fsp.writeFile(path.join(workspaceDir, "opencode.json"), "{}", "utf-8");
+
+      await expect(registry.resolveAdapter(workspaceDir)).rejects.toThrow(AmbiguousHostError);
+    });
+
+    it("resolves specific host_id directly even when multiple harnesses are installed", async () => {
+      const registry = new AdapterRegistry();
+
+      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      await fsp.writeFile(path.join(workspaceDir, "opencode.json"), "{}", "utf-8");
+
+      const resolved = await registry.resolveAdapter(workspaceDir, "opencode");
+      expect(resolved.id).toBe("opencode");
     });
   });
 });

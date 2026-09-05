@@ -87,6 +87,9 @@
         },
         "configuration_mutation": {
           "$ref": "#/definitions/configuration_mutation_capability"
+        },
+        "reasoning": {
+          "$ref": "#/definitions/capability_entry"
         }
       },
       "additionalProperties": false

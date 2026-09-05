@@ -54,13 +54,15 @@ describe("SPEC Acceptance Test Suite: Evidence, JSONC, Variants, Layering, and S
       const adapter = new CodexAdapter();
       const caps = await adapter.inspectCapabilities(workspaceDir);
 
-      // Never emits 'max' unless evidenced in config
+      // Never emits 'max' or synthesized ['low', 'medium', 'high'] unless evidenced in config
       expect(caps.supported_effort_values).not.toContain("max");
-      expect(caps.supported_effort_values).toEqual(["low", "medium", "high"]);
+      expect(caps.supported_effort_values).toEqual([]);
+      expect(caps.capabilities.reasoning?.state).toBe("unknown");
 
-      // Concurrency is unknown unless verified by config or environment
+      // Concurrency and parallelism are unknown unless verified by config or environment
       expect(caps.capabilities.concurrency?.state).toBe("unknown");
       expect(caps.capabilities.concurrency?.max_concurrency).toBeUndefined();
+      expect(caps.capabilities.parallelism.state).toBe("unknown");
     });
 
     it("Codex adapter detects explicit max_concurrency from config.toml", async () => {

@@ -5,6 +5,12 @@ import {
   RenderedConfiguration,
   ApplyResult,
   ValidationResult,
+  HostVersionInfo,
+  HostReasoningOptions,
+  TopologyCapabilities,
+  CompanionRegistrationStatus,
+  CompanionRegistrationPreview,
+  ResolvedReasoningPolicy,
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 
@@ -17,9 +23,105 @@ export class GenericAdapter implements HostAdapter {
   readonly id = "generic";
   readonly name = "Generic / Manual Adapter";
 
+  hasActiveRuntimeContext(_workspaceRoot?: string): boolean {
+    return false;
+  }
+
   async identifyHost(_workspaceRoot?: string): Promise<boolean> {
     // Acts as universal fallback adapter
     return true;
+  }
+
+  async inspectVersion(_workspaceRoot?: string): Promise<HostVersionInfo> {
+    return {
+      version: undefined,
+      compatibility: "supported",
+      fail_closed_for_mutation: true,
+    };
+  }
+
+  async inspectReasoningOptions(
+    _workspaceRoot?: string
+  ): Promise<HostReasoningOptions> {
+    return {
+      native_field: "reasoning",
+      supported_values: [],
+    };
+  }
+
+  async inspectExecutionTopologyCapabilities(
+    _workspaceRoot?: string
+  ): Promise<TopologyCapabilities> {
+    return {
+      supports_single_session: true,
+      supports_subagents: false,
+      supports_multi_agent: false,
+      supports_parallel_execution: false,
+      scopes: ["current-session"],
+    };
+  }
+
+  async inspectCompanionRegistration(
+    _workspaceRoot?: string,
+    _scope?: "project" | "global" | "user"
+  ): Promise<CompanionRegistrationStatus> {
+    return {
+      registered: false,
+      scope: "project",
+      locator: "unsupported",
+      details: "Generic host does not support automatic companion registration",
+    };
+  }
+
+  async previewCompanionRegistration(
+    _workspaceRoot?: string,
+    _scope?: "project" | "global" | "user"
+  ): Promise<CompanionRegistrationPreview> {
+    return {
+      supported: false,
+      adapter_id: this.id,
+      host_id: this.id,
+      scope: "project",
+      mutation_targets: [],
+      error: "Companion registration mutation is unsupported for generic host.",
+    };
+  }
+
+  async applyCompanionRegistration(
+    previewHash: string,
+    _workspaceRoot?: string
+  ): Promise<ApplyResult> {
+    return {
+      success: false,
+      preview_id: previewHash,
+      applied_targets: [],
+      error: "Companion registration mutation is unsupported for generic host.",
+    };
+  }
+
+  async validateCompanionRegistration(
+    _workspaceRoot?: string
+  ): Promise<ValidationResult> {
+    return {
+      valid: false,
+      message: "Generic adapter does not support companion registration.",
+    };
+  }
+
+  async previewConfiguration(
+    plan: ExecutionConfig,
+    profile?: AgentProfile,
+    workspaceRoot?: string
+  ): Promise<RenderedConfiguration> {
+    return this.renderConfiguration(plan, profile, workspaceRoot);
+  }
+
+  async resolveReasoningPolicy(
+    _policy: string,
+    _modelId?: string,
+    _workspaceRoot?: string
+  ): Promise<ResolvedReasoningPolicy | undefined> {
+    return undefined;
   }
 
   async inspectCapabilities(workspaceRoot?: string): Promise<HostCapabilities> {
@@ -44,6 +146,7 @@ export class GenericAdapter implements HostAdapter {
           supports_native_files: false,
           supports_session_mutation: false,
         },
+        reasoning: { state: "unknown" },
       },
     };
   }
@@ -81,9 +184,27 @@ export class GenericAdapter implements HostAdapter {
 
   async applyConfiguration(
     previewId: string,
-    _rendered?: RenderedConfiguration,
+    rendered?: RenderedConfiguration,
     _workspaceRoot?: string
   ): Promise<ApplyResult> {
+    if (!rendered) {
+      return {
+        success: false,
+        preview_id: previewId,
+        applied_targets: [],
+        error: "No rendered configuration provided to apply.",
+      };
+    }
+
+    if (rendered.preview_id && previewId !== rendered.preview_id) {
+      return {
+        success: false,
+        preview_id: previewId,
+        applied_targets: [],
+        error: `Preview ID mismatch: expected ${rendered.preview_id}, got ${previewId}.`,
+      };
+    }
+
     return {
       success: true,
       preview_id: previewId,
