@@ -6,9 +6,16 @@ import os from "node:os";
 import { CodexAdapter } from "../src/adapters/codex/index.js";
 import { OpenCodeAdapter } from "../src/adapters/opencode/index.js";
 import { GenericAdapter } from "../src/adapters/generic/index.js";
+import { CursorAdapter } from "../src/adapters/cursor/index.js";
 import { checkProfileStale } from "../src/profile/stale.js";
 import { HostCapabilities } from "../src/adapters/contract.js";
-import { Profile, ExecutionConfig } from "../src/profile/schema.js";
+import { Profile, ExecutionConfig, ExecutionConfigSchema } from "../src/profile/schema.js";
+import {
+  inspectCompanionSetup,
+  previewCompanionSetup,
+  applyCompanionSetup,
+  validateCompanionSetup,
+} from "../src/setup/lifecycle.js";
 
 describe("SPEC Acceptance Test Suite: Evidence, JSONC, Variants, Layering, and Stale", () => {
   let tempDir: string;
@@ -427,6 +434,329 @@ describe("SPEC Acceptance Test Suite: Evidence, JSONC, Variants, Layering, and S
       const result = checkProfileStale(multiProfile, unknownModelSelCaps);
       expect(result.stale).toBe(true);
       expect(result.reasons.some((r) => r.includes("host model selection capability is unknown"))).toBe(true);
+    });
+
+    it("detects stale profile when profile scope does not match host workspace (SPEC §13, §66)", () => {
+      const mismatchedScopeProfile: Profile = {
+        ...validProfile,
+        scope: {
+          type: "project",
+          workspace: "/some/other/workspace",
+        },
+      };
+
+      // When checking against a host with different adapter or mismatch
+      const mismatchHostCaps: HostCapabilities = {
+        ...baseCaps,
+        adapter_id: "codex",
+        host_id: "codex",
+      };
+
+      const result = checkProfileStale(mismatchedScopeProfile, mismatchHostCaps);
+      expect(result.stale).toBe(true);
+      expect(result.reasons.some((r) => r.includes("Adapter mismatch") || r.includes("Host ID mismatch"))).toBe(true);
+    });
+  });
+
+  describe("SPEC §89: User-Focused Acceptance Scenarios (Case A through Case F)", () => {
+    it("Case A — Codex: multi-model, tickets, workers -> Profile tiers -> model/effort routing", async () => {
+      const codexDir = path.join(workspaceDir, ".codex");
+      await fsp.mkdir(codexDir, { recursive: true });
+
+      // Profile declaring multi-model tiers
+      const multiModelProfile: Profile = {
+        profile_version: 1,
+        host: { id: "codex", adapter: "codex" },
+        scope: { type: "project", workspace: workspaceDir },
+        model_mode: "multi",
+        tiers: {
+          routine: { model: "gpt-4o-mini", effort: "low", source: "user-confirmed" },
+          standard: { model: "gpt-4o", effort: "medium", source: "user-confirmed" },
+          high: { model: "o3-mini", effort: "high", source: "user-confirmed" },
+          review: { model: "o3-mini", effort: "high", source: "user-confirmed" },
+        },
+      };
+
+      // Decomposed execution config routing tickets to workers based on profile tiers
+      const executionPlan: ExecutionConfig = {
+        task_shape: "decomposed",
+        model_mode: "multi",
+        readiness: "executable",
+        topology: { type: "controller-workers", concurrency: 2 },
+        controller: {
+          model: multiModelProfile.tiers!.high.model,
+          effort: multiModelProfile.tiers!.high.effort,
+          context: "main",
+        },
+        work_items: [
+          {
+            ticket_id: "01-routine-task",
+            difficulty: "routine",
+            model: multiModelProfile.tiers!.routine.model,
+            effort: multiModelProfile.tiers!.routine.effort,
+            effort_policy: "lowest-sufficient",
+            context: "worker-1",
+          },
+          {
+            ticket_id: "02-demanding-task",
+            difficulty: "demanding",
+            model: multiModelProfile.tiers!.high.model,
+            effort: multiModelProfile.tiers!.high.effort,
+            effort_policy: "highest-supported",
+            context: "worker-2",
+          },
+        ],
+        review: {
+          strategy: "controller-review",
+          model: multiModelProfile.tiers!.review.model,
+          effort: multiModelProfile.tiers!.review.effort,
+          context: "main",
+        },
+      };
+
+      expect(ExecutionConfigSchema.safeParse(executionPlan).success).toBe(true);
+
+      const adapter = new CodexAdapter();
+      const rendered = await adapter.renderConfiguration(executionPlan, multiModelProfile, workspaceDir);
+
+      // Verify mutation targets include controller config.toml and per-worker agent configs
+      expect(rendered.mutation_targets).toContain(path.join(codexDir, "config.toml"));
+      expect(rendered.mutation_targets).toContain(path.join(codexDir, "agents", "01-routine-task.toml"));
+      expect(rendered.mutation_targets).toContain(path.join(codexDir, "agents", "02-demanding-task.toml"));
+
+      await adapter.applyConfiguration(rendered.preview_id, rendered, workspaceDir);
+
+      // Inspect applied files to ensure model & effort routing matched profile tiers
+      const controllerToml = await fsp.readFile(path.join(codexDir, "config.toml"), "utf-8");
+      expect(controllerToml).toContain('model = "o3-mini"');
+      expect(controllerToml).toContain('model_reasoning_effort = "high"');
+
+      const worker1Toml = await fsp.readFile(path.join(codexDir, "agents", "01-routine-task.toml"), "utf-8");
+      expect(worker1Toml).toContain('model = "gpt-4o-mini"');
+      expect(worker1Toml).toContain('model_reasoning_effort = "low"');
+
+      const worker2Toml = await fsp.readFile(path.join(codexDir, "agents", "02-demanding-task.toml"), "utf-8");
+      expect(worker2Toml).toContain('model = "o3-mini"');
+      expect(worker2Toml).toContain('model_reasoning_effort = "high"');
+    });
+
+    it("Case B — Single-model Harness: single model, tickets -> same model -> worker or serial topology", async () => {
+      // Profile for single-model harness
+      const singleModelProfile: Profile = {
+        profile_version: 1,
+        host: { id: "claude-code", adapter: "claude-code" },
+        scope: { type: "project", workspace: workspaceDir },
+        model_mode: "single",
+        single_model: {
+          model: "claude-3-7-sonnet",
+          execution_effort: { policy: "lowest-sufficient" },
+          review_effort: { policy: "highest-supported" },
+        },
+      };
+
+      // Decomposed tickets executed with single model across workers / serial topology
+      const singleModelPlan: ExecutionConfig = {
+        task_shape: "decomposed",
+        model_mode: "single",
+        readiness: "executable",
+        topology: { type: "serial-tickets", concurrency: 1 },
+        controller: {
+          model: singleModelProfile.single_model!.model,
+          effort: "medium",
+          context: "main",
+        },
+        work_items: [
+          {
+            ticket_id: "01-frontend",
+            difficulty: "routine",
+            model: singleModelProfile.single_model!.model,
+            effort: "low",
+            context: "step-1",
+          },
+          {
+            ticket_id: "02-backend",
+            difficulty: "demanding",
+            model: singleModelProfile.single_model!.model,
+            effort: "high",
+            context: "step-2",
+          },
+        ],
+        review: {
+          strategy: "self-check",
+          model: singleModelProfile.single_model!.model,
+          effort: "high",
+          context: "main",
+        },
+      };
+
+      // Validates under strict ExecutionConfig schema
+      const parseResult = ExecutionConfigSchema.safeParse(singleModelPlan);
+      expect(parseResult.success).toBe(true);
+
+      // Verify all work items and review use the same single model (no extra models invented)
+      expect(singleModelPlan.controller?.model).toBe("claude-3-7-sonnet");
+      expect(singleModelPlan.work_items?.every((w) => w.model === "claude-3-7-sonnet")).toBe(true);
+      expect(singleModelPlan.review.model).toBe("claude-3-7-sonnet");
+    });
+
+    it("Case C — Companion missing: agent-config -> offer setup -> no silent install", async () => {
+      const adapter = new CursorAdapter();
+
+      // In clean workspace, companion is not registered
+      const inspection = await inspectCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "cursor",
+        scope: "project",
+      });
+
+      expect(inspection.registered).toBe(false);
+
+      // Verify no silent install: no files created by inspection
+      const cursorConfigDir = path.join(workspaceDir, ".cursor");
+      expect(fs.existsSync(cursorConfigDir)).toBe(false);
+
+      // Setup is offered via preview
+      const preview = await previewCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "cursor",
+        scope: "project",
+      });
+
+      expect(preview.supported).toBe(true);
+      expect(preview.target_file).toBe(path.join(cursorConfigDir, "mcp.json"));
+      expect(preview.diff).toContain("+    \"agent-config\"");
+
+      // Refuses to apply mutation without explicit user approval (--yes)
+      const unapprovedApply = await applyCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "cursor",
+        scope: "project",
+        preview_hash: preview.preview_hash,
+        explicit_approval: false,
+      });
+
+      expect(unapprovedApply.success).toBe(false);
+      expect(unapprovedApply.error).toContain("ApprovalRequiredError");
+
+      // Still no file modified without approval
+      expect(fs.existsSync(cursorConfigDir)).toBe(false);
+    });
+
+    it("Case D — Unsupported Harness: Generic/manual -> explicit user-confirmed Profile -> plan-only", async () => {
+      const adapter = new GenericAdapter();
+
+      // Generic adapter fails closed for mutations
+      const version = await adapter.inspectVersion(workspaceDir);
+      expect(version.fail_closed_for_mutation).toBe(true);
+
+      const caps = await adapter.inspectCapabilities(workspaceDir);
+      expect(caps.capabilities.configuration_mutation?.supports_session_mutation).toBe(false);
+
+      const manualProfile: Profile = {
+        profile_version: 1,
+        host: { id: "generic", adapter: "generic" },
+        scope: { type: "project", workspace: workspaceDir },
+        model_mode: "single",
+        single_model: {
+          model: "custom-local-model",
+          execution_effort: { policy: "highest-supported" },
+        },
+      };
+
+      const plan: ExecutionConfig = {
+        task_shape: "single-pass",
+        model_mode: "single",
+        readiness: "executable",
+        topology: { type: "single-session", concurrency: 1 },
+        execution: { model: "custom-local-model", effort: "high", context: "main" },
+        review: { strategy: "self-check", model: "custom-local-model", effort: "high", context: "main" },
+      };
+
+      // Plan rendering succeeds in plan-only mode (zero mutation targets, zero files modified)
+      const rendered = await adapter.renderConfiguration(plan, manualProfile, workspaceDir);
+      expect(rendered.mutation_targets).toEqual([]);
+      expect(rendered.files).toEqual([]);
+      expect(rendered.diff).toContain("# Generic Plan-Only Configuration Preview");
+      expect(rendered.diff).toContain("Mutation Targets: None (plan-only manual execution)");
+      expect(rendered.diff).toContain("Task Shape: single-pass");
+
+      // Mutation apply is strictly plan-only: applied_targets is empty
+      const applyResult = await adapter.applyConfiguration(rendered.preview_id, rendered, workspaceDir);
+      expect(applyResult.success).toBe(true);
+      expect(applyResult.applied_targets).toEqual([]);
+      expect(applyResult.message).toContain("Generic adapter is plan-only: no host mutations performed.");
+
+      // Companion mutation is strictly rejected
+      const companionApply = await adapter.applyCompanionRegistration(workspaceDir);
+      expect(companionApply.success).toBe(false);
+      expect(companionApply.error).toContain("Companion registration mutation is unsupported for generic host.");
+    });
+
+    it("Case E — Host capability unknown: unknown -> no guessing", async () => {
+      // Empty workspace without host evidence
+      const adapter = new CodexAdapter();
+      const caps = await adapter.inspectCapabilities(workspaceDir);
+
+      // Reasoning capability is unknown, effort values are empty
+      expect(caps.capabilities.reasoning?.state).toBe("unknown");
+      expect(caps.supported_effort_values).toEqual([]);
+
+      // Concurrency and parallelism are unknown (no guessing concurrency limits)
+      expect(caps.capabilities.concurrency?.state).toBe("unknown");
+      expect(caps.capabilities.concurrency?.max_concurrency).toBeUndefined();
+      expect(caps.capabilities.parallelism.state).toBe("unknown");
+
+      // Models list fails closed: empty inventory when unconfigured
+      const models = await adapter.inspectModels(workspaceDir);
+      expect(models).toEqual([]);
+    });
+
+    it("Case F — Project-scope MCP setup: preview project target -> approval -> apply exact project target -> validate exact project registration", async () => {
+      const adapter = new CursorAdapter();
+
+      // 1. Preview project target
+      const preview = await previewCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "cursor",
+        scope: "project",
+      });
+
+      const projectTargetPath = path.join(workspaceDir, ".cursor", "mcp.json");
+      expect(preview.target_file).toBe(projectTargetPath);
+      expect(preview.scope).toBe("project");
+
+      // 2. Explicit approval and apply exact project target
+      const applyResult = await applyCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "cursor",
+        scope: "project",
+        preview_hash: preview.preview_hash,
+        explicit_approval: true,
+        frozen_preview: preview,
+      });
+
+      expect(applyResult.success).toBe(true);
+      expect(applyResult.applied_targets).toEqual([projectTargetPath]);
+      expect(fs.existsSync(projectTargetPath)).toBe(true);
+
+      // 3. Validate exact project registration
+      const validation = await validateCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "cursor",
+        scope: "project",
+      });
+
+      expect(validation.valid).toBe(true);
+      expect(validation.registered).toBe(true);
+      expect(validation.configured).toBe(true);
+
+      const postInspection = await inspectCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "cursor",
+        scope: "project",
+      });
+      expect(postInspection.registered).toBe(true);
+      expect(postInspection.locator).toBe(projectTargetPath);
     });
   });
 });

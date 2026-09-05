@@ -13,6 +13,8 @@
     "start": "node dist/server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "check:types": "tsc --noEmit"
   },
   "keywords": [
