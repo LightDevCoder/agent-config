@@ -3,10 +3,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
 import {
   ValidateConfigurationInputSchema,
+  ValidateConfigurationOutputSchema,
   ValidateConfigurationResult,
 } from "../../contracts/index.js";
 
-export { ValidateConfigurationInputSchema, ValidateConfigurationResult };
+export {
+  ValidateConfigurationInputSchema,
+  ValidateConfigurationOutputSchema,
+  ValidateConfigurationResult,
+};
 
 export async function handleValidateConfiguration(
   params: {
@@ -58,12 +63,14 @@ export function registerValidateConfigurationTool(
       description:
         "Verify that actual host configuration matches expected configuration after apply.",
       inputSchema: ValidateConfigurationInputSchema,
+      outputSchema: ValidateConfigurationOutputSchema,
     },
     async (params) => {
       try {
         const result = await handleValidateConfiguration(params, context);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as any,
         };
       } catch (err: any) {
         return {

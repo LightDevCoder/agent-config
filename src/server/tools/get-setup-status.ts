@@ -4,12 +4,13 @@ import { ToolContext } from "./context.js";
 import { checkProfileStale } from "../../profile/stale.js";
 import {
   GetSetupStatusInputSchema,
+  GetSetupStatusOutputSchema,
   SetupStatusResult,
   PROTOCOL_VERSION,
   ScopeType,
 } from "../../contracts/index.js";
 
-export { GetSetupStatusInputSchema, SetupStatusResult };
+export { GetSetupStatusInputSchema, GetSetupStatusOutputSchema, SetupStatusResult };
 
 export async function handleGetSetupStatus(
   params: { scope?: ScopeType; workspace?: string; host_id?: string },
@@ -75,12 +76,14 @@ export function registerGetSetupStatusTool(
       description:
         "Query setup and configuration readiness status for the current host and workspace.",
       inputSchema: GetSetupStatusInputSchema,
+      outputSchema: GetSetupStatusOutputSchema,
     },
     async (params) => {
       try {
         const result = await handleGetSetupStatus(params, context);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as any,
         };
       } catch (err: any) {
         return {

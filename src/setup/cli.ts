@@ -111,6 +111,8 @@ Options:
         } else {
           console.log(`Harness:    ${inspection.host_id} (Adapter: ${inspection.adapter_id})`);
           console.log(`Registered: NO`);
+          console.log(`Reachable:  NO`);
+          console.log(`Healthy:    NO`);
         }
         return 1;
       }
@@ -151,6 +153,13 @@ Options:
         if (validation.health?.schema_errors && validation.health.schema_errors.length > 0) {
           console.log(`Schema errors: ${validation.health.schema_errors.join("; ")}`);
         }
+        if (validation.health?.reasons && validation.health.reasons.length > 0) {
+          for (const r of validation.health.reasons) {
+            if (!validation.health.schema_errors?.includes(r)) {
+              console.log(`Diagnostic: ${r}`);
+            }
+          }
+        }
       }
       return validation.healthy ? 0 : 1;
     }
@@ -175,12 +184,13 @@ Options:
         console.log(`Agent Config Companion MCP is already registered for ${inspection.host_id}.`);
         console.log(`Locator:    ${inspection.locator}`);
         console.log(`Validation: ${validation.valid ? "PASSED" : "FAILED"}`);
-        if (!validation.valid) {
+        console.log(`Healthy:    ${validation.healthy ? "YES" : "NO"}`);
+        if (!validation.valid || !validation.healthy) {
           console.error(`Reason:     ${validation.message}`);
           return 1;
         }
       }
-      return 0;
+      return validation.healthy ? 0 : 1;
     }
 
     // Generate preview
@@ -227,12 +237,33 @@ Options:
       explicit_approval: true,
     });
 
+    const isHealthy = applyResult.validation?.healthy === true;
+    const isCompleted = applyResult.success && isHealthy;
+
     if (options.json) {
-      console.log(JSON.stringify(applyResult, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            ...applyResult,
+            healthy: isHealthy,
+            completed: isCompleted,
+          },
+          null,
+          2
+        )
+      );
     } else {
       console.log(applyResult.message);
       if (applyResult.validation) {
-        console.log(`Validation: ${applyResult.validation.valid ? "PASSED" : "FAILED"}`);
+        console.log(`Registered: ${applyResult.validation.registered ? "YES" : "NO"}`);
+        console.log(`Configured: ${applyResult.validation.configured ? "YES" : "NO"}`);
+        console.log(`Reachable:  ${applyResult.validation.reachable ? "YES" : "NO"}`);
+        console.log(`Healthy:    ${applyResult.validation.healthy ? "YES" : "NO"}`);
+        if (!isHealthy && applyResult.validation.health?.reasons) {
+          for (const reason of applyResult.validation.health.reasons) {
+            console.log(`Diagnostic: ${reason}`);
+          }
+        }
       }
     }
 

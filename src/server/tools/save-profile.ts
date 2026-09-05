@@ -5,10 +5,11 @@ import { Profile, ProfileSchema } from "../../profile/schema.js";
 import { validateProfileAgainstJsonSchema } from "../../profile/validator.js";
 import {
   SaveProfileInputSchema,
+  SaveProfileOutputSchema,
   SaveProfileResult,
 } from "../../contracts/index.js";
 
-export { SaveProfileInputSchema, SaveProfileResult };
+export { SaveProfileInputSchema, SaveProfileOutputSchema, SaveProfileResult };
 
 export async function handleSaveProfile(
   params: { profile: unknown; workspace?: string },
@@ -77,12 +78,14 @@ export function registerSaveProfileTool(
       description:
         "Atomically validate and save a user-confirmed Agent Config profile.",
       inputSchema: SaveProfileInputSchema,
+      outputSchema: SaveProfileOutputSchema,
     },
     async (params) => {
       try {
         const result = await handleSaveProfile(params, context);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as any,
         };
       } catch (err: any) {
         return {

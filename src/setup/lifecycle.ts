@@ -79,6 +79,9 @@ export interface CompanionSetupApplyOptions {
   explicit_approval: boolean;
   registry?: AdapterRegistry;
   frozen_preview?: CompanionSetupPreview;
+  protocol_version?: number;
+  tools?: CompanionToolDefinition[] | Record<string, CompanionToolDefinition>;
+  reachable?: boolean;
 }
 
 export interface CompanionSetupApplyResult {
@@ -124,10 +127,14 @@ export interface CompanionSetupLifecycleOptions {
   scope?: "project" | "global";
   explicit_approval?: boolean;
   registry?: AdapterRegistry;
+  protocol_version?: number;
+  tools?: CompanionToolDefinition[] | Record<string, CompanionToolDefinition>;
+  reachable?: boolean;
 }
 
 export interface CompanionSetupLifecycleResult {
-  stage: "inspected" | "preview" | "completed";
+  stage: "inspected" | "preview" | "completed" | "repair_required";
+  success?: boolean;
   inspection: CompanionSetupInspection;
   preview?: CompanionSetupPreview;
   apply?: CompanionSetupApplyResult;
@@ -437,6 +444,9 @@ export async function applyCompanionSetup(
     host_id: options.host_id || adapter.id,
     scope: options.scope,
     registry: options.registry,
+    protocol_version: options.protocol_version,
+    tools: options.tools,
+    reachable: options.reachable,
   });
 
   return {
@@ -450,6 +460,9 @@ export async function applyCompanionSetup(
 }
 
 function findExecutable(command: string): string | null {
+  if (command === "node" || command === "nodejs") {
+    return process.execPath;
+  }
   if (path.isAbsolute(command)) {
     return fs.existsSync(command) ? command : null;
   }
@@ -475,7 +488,7 @@ function findExecutable(command: string): string | null {
 async function probeCompanionMcp(
   commandPath: string,
   args: string[] = [],
-  timeoutMs: number = 2000
+  timeoutMs: number = 3000
 ): Promise<{
   reachable: boolean;
   protocol_version?: number;
@@ -484,6 +497,8 @@ async function probeCompanionMcp(
   return new Promise((resolve) => {
     let resolved = false;
     let proc: any;
+    let probedToolsList: CompanionToolDefinition[] | undefined;
+
     const finish = (result: {
       reachable: boolean;
       protocol_version?: number;
@@ -521,6 +536,12 @@ async function probeCompanionMcp(
       finish({ reachable: false });
     });
 
+    proc.on("close", () => {
+      if (!resolved) {
+        finish({ reachable: false });
+      }
+    });
+
     let buffer = "";
     proc.stdout.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf-8");
@@ -531,6 +552,13 @@ async function probeCompanionMcp(
         try {
           const msg = JSON.parse(line.trim());
           if (msg.id === 1 && msg.result) {
+            // Handshake completed: send initialized notification and request tools list
+            const initNotice =
+              JSON.stringify({
+                jsonrpc: "2.0",
+                method: "notifications/initialized",
+                params: {},
+              }) + "\n";
             const listReq =
               JSON.stringify({
                 jsonrpc: "2.0",
@@ -538,18 +566,88 @@ async function probeCompanionMcp(
                 method: "tools/list",
                 params: {},
               }) + "\n";
-            proc.stdin.write(listReq);
-          } else if (msg.id === 2 && msg.result) {
-            const rawTools = msg.result.tools || [];
+            try {
+              proc.stdin.write(initNotice);
+              proc.stdin.write(listReq);
+            } catch {
+              finish({ reachable: false });
+            }
+          } else if (msg.id === 2) {
+            if (msg.error) {
+              finish({
+                reachable: true,
+                protocol_version: undefined,
+                tools: [],
+              });
+              return;
+            }
+            const rawTools = msg.result?.tools || [];
             const tools: CompanionToolDefinition[] = rawTools.map((t: any) => ({
               name: t.name,
               inputSchema: t.inputSchema,
               outputSchema: t.outputSchema,
             }));
+            probedToolsList = tools;
+
+            // Check if canonical get_setup_status tool exists
+            const hasGetSetupStatus = tools.some((t) => t.name === "get_setup_status");
+            if (!hasGetSetupStatus) {
+              // Missing get_setup_status: cannot probe contract version
+              finish({
+                reachable: true,
+                protocol_version: undefined,
+                tools,
+              });
+              return;
+            }
+
+            // Probe actual Agent Config contract version from live companion via get_setup_status (SPEC §6, §7)
+            const callReq =
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: 3,
+                method: "tools/call",
+                params: {
+                  name: "get_setup_status",
+                  arguments: {},
+                },
+              }) + "\n";
+            try {
+              proc.stdin.write(callReq);
+            } catch {
+              finish({
+                reachable: true,
+                protocol_version: undefined,
+                tools,
+              });
+            }
+          } else if (msg.id === 3) {
+            let probedProtocol: number | undefined;
+            if (msg.result) {
+              if (typeof msg.result.protocol_version === "number") {
+                probedProtocol = msg.result.protocol_version;
+              } else if (Array.isArray(msg.result.content)) {
+                for (const item of msg.result.content) {
+                  if (item?.type === "text" && typeof item.text === "string") {
+                    try {
+                      const parsed = JSON.parse(item.text);
+                      if (typeof parsed?.protocol_version === "number") {
+                        probedProtocol = parsed.protocol_version;
+                        break;
+                      }
+                    } catch {
+                      // ignore non-json text
+                    }
+                  }
+                }
+              } else if (typeof msg.result.structuredContent?.protocol_version === "number") {
+                probedProtocol = msg.result.structuredContent.protocol_version;
+              }
+            }
             finish({
               reachable: true,
-              protocol_version: 1,
-              tools,
+              protocol_version: probedProtocol,
+              tools: probedToolsList,
             });
             return;
           }
@@ -680,7 +778,9 @@ export async function validateCompanionSetup(
   const protocolToEvaluate =
     options?.protocol_version !== undefined
       ? options.protocol_version
-      : (probedProtocol ?? (isReachable ? 1 : 0));
+      : options?.tools !== undefined
+        ? 1
+        : (probedProtocol ?? 0);
 
   const healthResult = evaluateCompanionHealth({
     protocol_version: protocolToEvaluate,
@@ -753,15 +853,26 @@ export async function runCompanionSetupLifecycle(
   // Step 1: Identify current Harness & Inspect companion registration
   const inspection = await inspectCompanionSetup(options);
 
-  // If already registered, validate effective state and return completed
+  // If already registered, validate effective state and return completed only if healthy
   if (inspection.registered) {
     const validation = await validateCompanionSetup(options);
-    return {
-      stage: "completed",
-      inspection,
-      validation,
-      message: `Agent Config Companion MCP is already registered and validated for host '${inspection.host_id}'.`,
-    };
+    if (validation.healthy) {
+      return {
+        stage: "completed",
+        success: true,
+        inspection,
+        validation,
+        message: `Agent Config Companion MCP is already registered and validated for host '${inspection.host_id}'.`,
+      };
+    } else {
+      return {
+        stage: "repair_required",
+        success: false,
+        inspection,
+        validation,
+        message: `Agent Config Companion MCP is registered for host '${inspection.host_id}', but companion is unhealthy: ${validation.message}`,
+      };
+    }
   }
 
   // Step 2: Generate preview with exact ownership
@@ -769,6 +880,7 @@ export async function runCompanionSetupLifecycle(
   if (!preview.supported) {
     return {
       stage: "preview",
+      success: false,
       inspection,
       preview,
       requires_approval: false,
@@ -780,6 +892,7 @@ export async function runCompanionSetupLifecycle(
   if (options?.explicit_approval !== true) {
     return {
       stage: "preview",
+      success: false,
       inspection,
       preview,
       requires_approval: true,
@@ -797,19 +910,37 @@ export async function runCompanionSetupLifecycle(
     baseline_hash: preview.baseline_hash,
     explicit_approval: true,
     registry: options.registry,
+    protocol_version: options?.protocol_version,
+    tools: options?.tools,
+    reachable: options?.reachable,
   });
 
-  // Step 5: Read back effective state
+  // Step 5: Read back effective state and verify health (SPEC §10, §14)
   const validation = applyResult.validation || (await validateCompanionSetup(options));
+  const isHealthy = validation.healthy;
 
-  return {
-    stage: "completed",
-    inspection,
-    preview,
-    apply: applyResult,
-    validation,
-    message: applyResult.success
-      ? `Companion MCP server registered and validated for host '${inspection.host_id}'.`
-      : `Failed to apply companion registration for host '${inspection.host_id}': ${applyResult.message}`,
-  };
+  if (applyResult.success && isHealthy) {
+    return {
+      stage: "completed",
+      success: true,
+      inspection,
+      preview,
+      apply: applyResult,
+      validation,
+      message: `Companion MCP server registered and validated for host '${inspection.host_id}'.`,
+    };
+  } else {
+    const errorMsg = !applyResult.success
+      ? `Failed to apply companion registration for host '${inspection.host_id}': ${applyResult.message}`
+      : `Companion registration applied for host '${inspection.host_id}', but health validation failed: ${validation.message}`;
+    return {
+      stage: "repair_required",
+      success: false,
+      inspection,
+      preview,
+      apply: applyResult,
+      validation,
+      message: errorMsg,
+    };
+  }
 }

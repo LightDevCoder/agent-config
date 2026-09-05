@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
 import {
   PreviewConfigurationInputSchema,
+  PreviewConfigurationOutputSchema,
   ExtendedPreviewResult,
 } from "../../contracts/index.js";
 import { ExecutionConfig, ExecutionConfigSchema } from "../../profile/schema.js";
@@ -11,7 +12,11 @@ import {
   validateExecutionConfig,
 } from "../../profile/validator.js";
 
-export { PreviewConfigurationInputSchema, ExtendedPreviewResult };
+export {
+  PreviewConfigurationInputSchema,
+  PreviewConfigurationOutputSchema,
+  ExtendedPreviewResult,
+};
 
 export async function handlePreviewConfiguration(
   params: { config: unknown; workspace?: string; host_id?: string },
@@ -121,12 +126,14 @@ export function registerPreviewConfigurationTool(
       description:
         "Generate a configuration preview (diff and mutation targets) before applying any changes.",
       inputSchema: PreviewConfigurationInputSchema,
+      outputSchema: PreviewConfigurationOutputSchema,
     },
     async (params) => {
       try {
         const result = await handlePreviewConfiguration(params, context);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as any,
         };
       } catch (err: any) {
         return {

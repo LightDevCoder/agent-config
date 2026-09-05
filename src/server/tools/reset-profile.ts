@@ -3,11 +3,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
 import {
   ResetProfileInputSchema,
+  ResetProfileOutputSchema,
   ResetProfileResult,
   ScopeType,
 } from "../../contracts/index.js";
 
-export { ResetProfileInputSchema, ResetProfileResult };
+export { ResetProfileInputSchema, ResetProfileOutputSchema, ResetProfileResult };
 
 export async function handleResetProfile(
   params: { scope?: ScopeType; workspace?: string; host_id?: string },
@@ -50,12 +51,14 @@ export function registerResetProfileTool(
       description:
         "Safely clear and remove the host-scoped profile for the specified workspace.",
       inputSchema: ResetProfileInputSchema,
+      outputSchema: ResetProfileOutputSchema,
     },
     async (params) => {
       try {
         const result = await handleResetProfile(params, context);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as any,
         };
       } catch (err: any) {
         return {

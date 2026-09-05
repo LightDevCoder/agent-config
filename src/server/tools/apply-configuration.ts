@@ -3,10 +3,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
 import {
   ApplyConfigurationInputSchema,
+  ApplyConfigurationOutputSchema,
   ApplyConfigurationResult,
 } from "../../contracts/index.js";
 
-export { ApplyConfigurationInputSchema, ApplyConfigurationResult };
+export {
+  ApplyConfigurationInputSchema,
+  ApplyConfigurationOutputSchema,
+  ApplyConfigurationResult,
+};
 
 export async function handleApplyConfiguration(
   params: { preview_id: string; workspace?: string },
@@ -87,12 +92,14 @@ export function registerApplyConfigurationTool(
       description:
         "Apply a previously previewed configuration using a valid preview ID.",
       inputSchema: ApplyConfigurationInputSchema,
+      outputSchema: ApplyConfigurationOutputSchema,
     },
     async (params) => {
       try {
         const result = await handleApplyConfiguration(params, context);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as any,
         };
       } catch (err: any) {
         return {

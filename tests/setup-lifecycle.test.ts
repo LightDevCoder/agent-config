@@ -17,6 +17,8 @@ import {
   AdapterRegistry,
   ProfileStore,
   PreviewManager,
+  CANONICAL_TOOL_CONTRACTS,
+  TOOL_NAMES,
 } from "../src/index.js";
 import { createIsolatedEnv, IsolatedEnv } from "./harness/isolated-env.js";
 
@@ -398,7 +400,21 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       expect(fs.existsSync(targetFile)).toBe(false);
     });
 
-    it("completes full lifecycle when explicit_approval is true", async () => {
+    function getCanonicalTools() {
+      return TOOL_NAMES.map((name) => {
+        const canonical = CANONICAL_TOOL_CONTRACTS[name];
+        return {
+          name: canonical.name,
+          description: canonical.description,
+          parameters: canonical.parameters,
+          requiredParameters: canonical.requiredParameters,
+          responseProperties: canonical.responseProperties,
+          requiredResponseProperties: canonical.requiredResponseProperties,
+        };
+      });
+    }
+
+    it("completes full lifecycle when explicit_approval is true and companion is healthy", async () => {
       await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
 
       const result = await runCompanionSetupLifecycle({
@@ -406,6 +422,9 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
         host_id: "codex",
         explicit_approval: true,
         registry: adapterRegistry,
+        reachable: true,
+        tools: getCanonicalTools(),
+        protocol_version: 1,
       });
 
       expect(result.stage).toBe("completed");
@@ -421,9 +440,29 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
         workspace: workspaceDir,
         host_id: "codex",
         registry: adapterRegistry,
+        reachable: true,
+        tools: getCanonicalTools(),
+        protocol_version: 1,
       });
       expect(rerun.stage).toBe("completed");
       expect(rerun.inspection.registered).toBe(true);
+    });
+
+    it("returns repair_required and success: false when registered but companion is unhealthy (SPEC §10, §14 Scenario G)", async () => {
+      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+
+      const result = await runCompanionSetupLifecycle({
+        workspace: workspaceDir,
+        host_id: "codex",
+        explicit_approval: true,
+        registry: adapterRegistry,
+        // No companion running -> unhealthy
+      });
+
+      expect(result.stage).toBe("repair_required");
+      expect(result.success).toBe(false);
+      expect(result.apply?.applied_targets.length).toBeGreaterThan(0);
+      expect(result.message).not.toContain("registered and validated");
     });
   });
 

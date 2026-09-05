@@ -3,10 +3,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
 import {
   InspectHostInputSchema,
+  InspectHostOutputSchema,
   InspectHostResult,
 } from "../../contracts/index.js";
 
-export { InspectHostInputSchema, InspectHostResult };
+export { InspectHostInputSchema, InspectHostOutputSchema, InspectHostResult };
 
 export async function handleInspectHost(
   params: { workspace?: string; host_id?: string },
@@ -30,12 +31,14 @@ export function registerInspectHostTool(
       description:
         "Inspect host runtime capabilities, available models, supported effort values, and execution topology.",
       inputSchema: InspectHostInputSchema,
+      outputSchema: InspectHostOutputSchema,
     },
     async (params) => {
       try {
         const result = await handleInspectHost(params, context);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as any,
         };
       } catch (err: any) {
         return {

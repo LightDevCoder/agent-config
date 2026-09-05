@@ -3,11 +3,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
 import {
   GetProfileInputSchema,
+  GetProfileOutputSchema,
   GetProfileResult,
   ScopeType,
 } from "../../contracts/index.js";
 
-export { GetProfileInputSchema, GetProfileResult };
+export { GetProfileInputSchema, GetProfileOutputSchema, GetProfileResult };
 
 export async function handleGetProfile(
   params: { scope?: ScopeType; workspace?: string; host_id?: string },
@@ -49,12 +50,14 @@ export function registerGetProfileTool(
       description:
         "Retrieve the stored, user-confirmed Agent Config profile for the specified host and workspace.",
       inputSchema: GetProfileInputSchema,
+      outputSchema: GetProfileOutputSchema,
     },
     async (params) => {
       try {
         const result = await handleGetProfile(params, context);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as any,
         };
       } catch (err: any) {
         return {
