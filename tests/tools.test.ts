@@ -244,6 +244,19 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
         )
       ).rejects.toThrow();
     });
+
+    it("should fail closed and reject arbitrary unstructured configuration payload", async () => {
+      const unstructured = {
+        arbitrary_key: 12345,
+        random_field: "not-a-valid-config",
+      };
+      await expect(
+        handlePreviewConfiguration(
+          { config: unstructured, workspace: workspaceDir },
+          getContext()
+        )
+      ).rejects.toThrow(/canonical schema validation/);
+    });
   });
 
   describe("6. apply_configuration", () => {

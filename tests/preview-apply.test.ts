@@ -148,6 +148,16 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
       expect(stored).toBeDefined();
       expect(stored?.applied).toBe(false);
       expect(stored?.target_hashes[path.join(workspaceDir, ".codex", "config.toml")]).not.toBeNull();
+
+      // Verify FrozenMutationPreview properties (§26, §27)
+      expect(stored?.adapter_id).toBe("codex");
+      expect(stored?.host_identity).toBe("codex");
+      expect(stored?.scope).toBe("project");
+      expect(stored?.target).toBe(path.join(workspaceDir, ".codex", "config.toml"));
+      expect(stored?.baseline_hash).toBeDefined();
+      expect(stored?.mutation.diff).toBe(preview.diff);
+      expect(stored?.created_at).toBeDefined();
+      expect(stored?.expires_at).toBeDefined();
     });
   });
 
@@ -247,6 +257,29 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
           getContext()
         )
       ).rejects.toThrow(/has changed since preview was generated/);
+    });
+
+    it("rejects apply when host version drifts between preview and apply (stale preview guard per SPEC §31)", async () => {
+      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+
+      const preview = await handlePreviewConfiguration(
+        { config: codexSinglePlan, workspace: workspaceDir },
+        getContext()
+      );
+
+      const stored = previewManager.getPreview(preview.preview_id);
+      expect(stored).toBeDefined();
+      if (stored) {
+        // Simulate preview was captured with host_version 0.1.0
+        stored.host_version = "0.1.0-stale";
+      }
+
+      await expect(
+        handleApplyConfiguration(
+          { preview_id: preview.preview_id, workspace: workspaceDir },
+          getContext()
+        )
+      ).rejects.toThrow(/Stale preview: host version drifted/);
     });
   });
 
@@ -414,6 +447,31 @@ describe("Preview-Apply Lifecycle & Drift Verification", () => {
         getContext()
       );
       expect(val.valid).toBe(true);
+    });
+
+    it("ensures scope preservation between project and user/global targets without scope drop (SPEC §28)", async () => {
+      // Setup project codex file
+      await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
+      const projectTarget = path.join(workspaceDir, ".codex", "config.toml");
+      await fsp.writeFile(projectTarget, 'model = "old-project-model"\n', "utf-8");
+
+      const preview = await handlePreviewConfiguration(
+        { config: codexSinglePlan, workspace: workspaceDir },
+        getContext()
+      );
+
+      expect(preview.target).toBe(projectTarget);
+
+      const apply = await handleApplyConfiguration(
+        { preview_id: preview.preview_id, workspace: workspaceDir },
+        getContext()
+      );
+
+      expect(apply.success).toBe(true);
+      expect(apply.applied_targets).toEqual([projectTarget]);
+      // Verify content was applied to projectTarget and did NOT drop to global user scope
+      const projectContent = await fsp.readFile(projectTarget, "utf-8");
+      expect(projectContent).toContain("gpt-5.6-sol");
     });
   });
 });

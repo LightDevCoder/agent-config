@@ -4,6 +4,7 @@ import fsp from "node:fs/promises";
 import crypto from "node:crypto";
 import { HostAdapter, CompanionRegistrationStatus, CompanionRegistrationPreview, ValidationResult } from "../adapters/contract.js";
 import { AdapterRegistry, defaultAdapterRegistry } from "../adapters/registry.js";
+import { FrozenMutationPreview } from "../contracts/index.js";
 
 /**
  * Inspection details for companion setup (§14, §15, §19).
@@ -11,8 +12,11 @@ import { AdapterRegistry, defaultAdapterRegistry } from "../adapters/registry.js
 export interface CompanionSetupInspection {
   adapter_id: string;
   host_id: string;
-  scope: "project" | "global";
+  scope: "project" | "global" | "user";
   registered: boolean;
+  configured?: boolean;
+  reachable?: boolean;
+  healthy?: boolean;
   transport?: "stdio" | "sse" | "websocket" | "http";
   locator?: string;
   target_file?: string;
@@ -27,7 +31,7 @@ export interface CompanionSetupInspection {
 export interface MutationOwnership {
   adapter: string;
   host: string;
-  scope: "project" | "global";
+  scope: "project" | "global" | "user";
   target: string;
   baseline: string | null;
   changes: string;
@@ -35,32 +39,29 @@ export interface MutationOwnership {
 
 /**
  * Detailed companion preview including ownership and diff (§14, §71, §72).
+ * Implements FrozenMutationPreview (§26, §27).
  */
-export interface CompanionSetupPreview {
+export interface CompanionSetupPreview extends FrozenMutationPreview {
   supported: boolean;
-  adapter_id: string;
-  host_id: string;
-  scope: "project" | "global";
   target_file: string;
-  baseline_hash: string | null;
   diff: string;
-  preview_hash: string;
-  preview_id: string;
   mutation_targets: string[];
   ownership: MutationOwnership;
   formatted_ownership: string;
   error?: string;
+  raw_preview?: CompanionRegistrationPreview;
 }
 
 export interface CompanionSetupApplyOptions {
   workspace?: string;
   host_id?: string;
-  scope?: "project" | "global";
+  scope?: "project" | "global" | "user";
   preview_id?: string;
   preview_hash: string;
   baseline_hash?: string | null;
   explicit_approval: boolean;
   registry?: AdapterRegistry;
+  frozen_preview?: CompanionSetupPreview;
 }
 
 export interface CompanionSetupApplyResult {
@@ -79,6 +80,9 @@ export interface CompanionSetupValidationResult {
   host_id: string;
   adapter_id: string;
   registered: boolean;
+  configured?: boolean;
+  reachable?: boolean;
+  healthy?: boolean;
   mcp_reachable: boolean;
   semantic_config_valid: boolean;
   message: string;
@@ -146,7 +150,7 @@ export async function resolveSetupAdapter(
 export async function inspectCompanionSetup(options?: {
   workspace?: string;
   host_id?: string;
-  scope?: "project" | "global";
+  scope?: "project" | "global" | "user";
   registry?: AdapterRegistry;
 }): Promise<CompanionSetupInspection> {
   const { adapter, workspaceDir } = await resolveSetupAdapter(
@@ -160,7 +164,7 @@ export async function inspectCompanionSetup(options?: {
     options?.scope
   );
 
-  const resolvedScope: "project" | "global" =
+  const resolvedScope: "project" | "global" | "user" =
     rawStatus.scope || options?.scope || (options?.workspace ? "project" : "global");
   const targetFile = rawStatus.target_file || rawStatus.locator;
 
@@ -200,13 +204,14 @@ export async function previewCompanionSetup(options?: {
   );
 
   const targetFile = rawPreview.target_file || (rawPreview.mutation_targets && rawPreview.mutation_targets[0]) || "";
-  const resolvedScope: "project" | "global" = rawPreview.scope || options?.scope || (options?.workspace ? "project" : "global");
+  const resolvedScope: "project" | "global" | "user" = rawPreview.scope || options?.scope || (options?.workspace ? "project" : "global");
   const adapterId = rawPreview.adapter_id || adapter.id;
   const hostId = rawPreview.host_id || options?.host_id || adapter.id;
   const baselineHash = rawPreview.baseline_hash ?? null;
   const diff = rawPreview.diff || "";
   const previewHash = rawPreview.preview_hash || (diff ? crypto.createHash("sha256").update(diff).digest("hex") : "");
   const previewId = rawPreview.preview_id || `preview-companion-${adapterId}-${Date.now()}`;
+  const versionInfo = await adapter.inspectVersion(workspaceDir);
 
   const ownership: MutationOwnership = {
     adapter: adapterId,
@@ -217,13 +222,27 @@ export async function previewCompanionSetup(options?: {
     changes: diff,
   };
 
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + 15 * 60 * 1000).toISOString();
+
   return {
     supported: rawPreview.supported,
     adapter_id: adapterId,
     host_id: hostId,
+    host_identity: hostId,
+    host_version: versionInfo.version,
     scope: resolvedScope,
+    target: targetFile,
     target_file: targetFile,
+    baseline_identity: targetFile,
     baseline_hash: baselineHash,
+    mutation: {
+      diff,
+      patch: diff,
+      files: rawPreview.files,
+    },
+    created_at: createdAt.toISOString(),
+    expires_at: expiresAt,
     diff,
     preview_hash: previewHash,
     preview_id: previewId,
@@ -231,6 +250,7 @@ export async function previewCompanionSetup(options?: {
     ownership,
     formatted_ownership: formatMutationOwnership(ownership),
     error: rawPreview.error,
+    raw_preview: rawPreview,
   };
 }
 
@@ -258,32 +278,61 @@ export async function applyCompanionSetup(
     options.registry
   );
 
-  // Baseline drift check (§71)
-  if (options.baseline_hash !== undefined) {
-    const preview = await adapter.previewCompanionRegistration(
-      workspaceDir,
-      options.scope as any
-    );
-    if (preview.supported && preview.target_file && fs.existsSync(preview.target_file)) {
-      const currentContent = await fsp.readFile(preview.target_file, "utf-8");
+  // Stale preview & drift checks (§26, §31, §71)
+  const frozen = options.frozen_preview;
+  const targetScope = frozen?.scope || options.scope;
+  const targetFile = frozen?.target || frozen?.target_file;
+
+  if (frozen?.host_version) {
+    const versionInfo = await adapter.inspectVersion(workspaceDir);
+    const currentVer = versionInfo.version || "unknown";
+    if (currentVer !== frozen.host_version) {
+      return {
+        success: false,
+        preview_id: options.preview_id || options.preview_hash,
+        preview_hash: options.preview_hash,
+        applied_targets: [],
+        message: `Stale preview: host version drifted from '${frozen.host_version}' to '${currentVer}'. Refusing to apply stale preview. Please re-preview.`,
+        error: "StalePreviewError: Host version has changed since preview generation.",
+      };
+    }
+  }
+
+  // Baseline drift check (§71, §31)
+  if (options.baseline_hash !== undefined || frozen?.baseline_hash !== undefined) {
+    const expectedBaselineHash = options.baseline_hash !== undefined ? options.baseline_hash : frozen?.baseline_hash;
+    const checkFile = targetFile || (await adapter.previewCompanionRegistration(workspaceDir, targetScope as any)).target_file;
+    if (checkFile && fs.existsSync(checkFile)) {
+      const currentContent = await fsp.readFile(checkFile, "utf-8");
       const currentHash = crypto.createHash("sha256").update(currentContent).digest("hex");
-      if (options.baseline_hash !== null && currentHash !== options.baseline_hash) {
+      if (expectedBaselineHash !== null && expectedBaselineHash !== undefined && currentHash !== expectedBaselineHash) {
         return {
           success: false,
           preview_id: options.preview_id || options.preview_hash,
           preview_hash: options.preview_hash,
           applied_targets: [],
-          message: `Baseline hash drift detected for '${preview.target_file}': expected ${options.baseline_hash}, found ${currentHash}.`,
+          message: `Baseline hash drift detected for '${checkFile}': expected ${expectedBaselineHash}, found ${currentHash}.`,
           error: "BaselineDriftError: Target configuration was modified concurrently.",
         };
       }
+    } else if (expectedBaselineHash !== null && expectedBaselineHash !== undefined) {
+      return {
+        success: false,
+        preview_id: options.preview_id || options.preview_hash,
+        preview_hash: options.preview_hash,
+        applied_targets: [],
+        message: `Baseline hash drift detected: target file '${checkFile}' does not exist, but expected baseline ${expectedBaselineHash}.`,
+        error: "BaselineDriftError: Target file missing or modified concurrently.",
+      };
     }
   }
 
-  // Apply companion registration via adapter
+  // Apply companion registration via adapter using exact frozen preview if available
+  const rawPreviewToPass = frozen?.raw_preview;
   const applyResult = await adapter.applyCompanionRegistration(
     options.preview_hash,
-    workspaceDir
+    workspaceDir,
+    rawPreviewToPass
   );
 
   if (!applyResult.success) {
@@ -321,7 +370,7 @@ export async function applyCompanionSetup(
 export async function validateCompanionSetup(options?: {
   workspace?: string;
   host_id?: string;
-  scope?: "project" | "global";
+  scope?: "project" | "global" | "user";
   registry?: AdapterRegistry;
 }): Promise<CompanionSetupValidationResult> {
   const { adapter, workspaceDir } = await resolveSetupAdapter(
@@ -372,32 +421,63 @@ export async function validateCompanionSetup(options?: {
     semanticConfigValid = true;
   }
 
-  // MCP reachability: check command configuration
-  if (inspection.registered) {
-    const cmd = inspection.command || "agent-config";
-    if (cmd.includes("agent-config") || cmd.includes("node") || cmd.includes("npx") || cmd.length > 0) {
-      mcpReachable = true;
+  // Strictly distinguish registration, configuration, reachability, and health (SPEC §32-§33, §79)
+  const isRegistered = inspection.registered;
+  const isConfigured = semanticConfigValid;
+  let isReachable = false;
+  let isHealthy = false;
+
+  if (isRegistered && isConfigured) {
+    // Check if host provides native verification, command executable verification, or adapter reachability
+    const cmd = inspection.command;
+    if (cmd) {
+      const binName = cmd.trim().split(/\s+/)[0];
+      // If command is valid executable or in path or node/npx/agent-config
+      if (
+        binName === "agent-config" ||
+        binName === "node" ||
+        binName === "npx" ||
+        fs.existsSync(binName)
+      ) {
+        isReachable = true;
+        isHealthy = true;
+      } else {
+        // Unknown or custom command without verified path
+        isReachable = false;
+        isHealthy = false;
+      }
     } else {
-      errors.push(`Registered MCP server command '${cmd}' is invalid or empty.`);
+      // Registered in config, but command is absent or unknown => not reachable
+      isReachable = false;
+      isHealthy = false;
     }
   }
 
-  const isValid = adapterValidation.valid && inspection.registered && semanticConfigValid && mcpReachable && errors.length === 0;
+  mcpReachable = isReachable;
+
+  const isValid = adapterValidation.valid && isRegistered && isConfigured && errors.length === 0;
 
   return {
     valid: isValid,
     workspace: workspaceDir,
     host_id: options?.host_id || adapter.id,
     adapter_id: adapter.id,
-    registered: inspection.registered,
-    mcp_reachable: mcpReachable,
-    semantic_config_valid: semanticConfigValid,
+    registered: isRegistered,
+    configured: isConfigured,
+    reachable: isReachable,
+    healthy: isHealthy,
+    mcp_reachable: isReachable,
+    semantic_config_valid: isConfigured,
     message: isValid
-      ? `Companion MCP server registration validated and reachable for host '${adapter.id}'.`
+      ? `Companion MCP server registration validated for host '${adapter.id}' (registered: ${isRegistered}, configured: ${isConfigured}, reachable: ${isReachable}).`
       : `Companion validation failed for host '${adapter.id}': ${errors.join("; ")}`,
     details: {
       inspection,
       adapter_validation: adapterValidation,
+      registered: isRegistered,
+      configured: isConfigured,
+      reachable: isReachable,
+      healthy: isHealthy,
       errors,
     },
     errors: errors.length > 0 ? errors : undefined,

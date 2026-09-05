@@ -2,20 +2,15 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import crypto from "node:crypto";
 import { ConfigurationRenderResult } from "../adapters/contract.js";
+import { FrozenMutationPreview } from "../contracts/index.js";
 
-export interface StoredPreview {
-  preview_id: string;
-  preview_hash: string;
+export interface StoredPreview extends FrozenMutationPreview {
   workspace: string;
   config: unknown;
   diff: string;
   mutation_targets: string[];
-  target: string;
-  baseline_hash: string | null;
   target_hashes: Record<string, string | null>;
   rendered: ConfigurationRenderResult;
-  created_at: string;
-  expires_at?: string;
   applied: boolean;
 }
 
@@ -49,7 +44,14 @@ export class PreviewManager {
   async createPreview(
     workspace: string,
     renderResult: ConfigurationRenderResult,
-    config: unknown
+    config: unknown,
+    meta?: {
+      adapter_id?: string;
+      host_identity?: string;
+      host_version?: string;
+      scope?: "project" | "user" | "global";
+      target?: string;
+    }
   ): Promise<StoredPreview> {
     const targetHashes: Record<string, string | null> = {};
     for (const target of renderResult.mutation_targets) {
@@ -65,7 +67,7 @@ export class PreviewManager {
     // 15 minutes TTL
     const expiresAt = new Date(createdAt.getTime() + 15 * 60 * 1000).toISOString();
 
-    const target = renderResult.mutation_targets[0] || workspace;
+    const target = meta?.target || renderResult.mutation_targets[0] || workspace;
     const baselineHash = renderResult.mutation_targets[0]
       ? targetHashes[renderResult.mutation_targets[0]]
       : null;
@@ -73,12 +75,21 @@ export class PreviewManager {
     const preview: StoredPreview = {
       preview_id: renderResult.preview_id,
       preview_hash: `sha256-${previewHash}`,
+      adapter_id: meta?.adapter_id || "unknown",
+      host_identity: meta?.host_identity || meta?.adapter_id || "unknown",
+      host_version: meta?.host_version,
+      scope: meta?.scope || (workspace ? "project" : "global"),
+      target,
+      baseline_identity: target,
+      baseline_hash: baselineHash,
+      mutation: {
+        diff: renderResult.diff,
+        files: renderResult.files,
+      },
       workspace,
       config,
       diff: renderResult.diff,
       mutation_targets: renderResult.mutation_targets,
-      target,
-      baseline_hash: baselineHash,
       target_hashes: targetHashes,
       rendered: renderResult,
       created_at: createdAt.toISOString(),

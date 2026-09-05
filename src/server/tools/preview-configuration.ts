@@ -49,11 +49,20 @@ export async function handlePreviewConfiguration(
     workspace
   );
 
+  const versionInfo = await adapter.inspectVersion(workspace);
+
   // Register the preview in PreviewManager to snapshot target hashes and guard apply
   const stored = await context.previewManager.createPreview(
     workspace,
     renderResult,
-    validatedConfig
+    validatedConfig,
+    {
+      adapter_id: adapter.id,
+      host_identity: adapter.id,
+      host_version: versionInfo.version,
+      scope: workspace ? "project" : "global",
+      target: renderResult.mutation_targets[0] || workspace,
+    }
   );
 
   return {

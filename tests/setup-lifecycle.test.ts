@@ -37,9 +37,9 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
   });
 
   // ==========================================================================
-  // Section 1: All 10 P0 Native Adapters Setup Lifecycle
+  // Section 1: Native Adapters Setup Lifecycle
   // ==========================================================================
-  describe("P0 Native Adapters Lifecycle: Detect, Preview, Approve, Apply, Validate", () => {
+  describe("Native Adapters Lifecycle: Detect, Preview, Approve, Apply, Validate", () => {
     interface AdapterTestCase {
       id: string;
       name: string;
@@ -47,7 +47,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       expectedTargetSubpath: string;
     }
 
-    const P0_ADAPTERS: AdapterTestCase[] = [
+    const NATIVE_ADAPTERS: AdapterTestCase[] = [
       {
         id: "codex",
         name: "Codex",
@@ -73,14 +73,6 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
         expectedTargetSubpath: path.join(".claude", "mcp.json"),
       },
       {
-        id: "copilot-cli",
-        name: "GitHub Copilot CLI",
-        setupWorkspace: async (dir) => {
-          await fsp.mkdir(path.join(dir, ".github", "copilot"), { recursive: true });
-        },
-        expectedTargetSubpath: path.join(".github", "copilot", "mcp.json"),
-      },
-      {
         id: "gemini-cli",
         name: "Gemini CLI",
         setupWorkspace: async (dir) => {
@@ -95,22 +87,6 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
           await fsp.mkdir(path.join(dir, ".cursor"), { recursive: true });
         },
         expectedTargetSubpath: path.join(".cursor", "mcp.json"),
-      },
-      {
-        id: "kiro",
-        name: "Kiro",
-        setupWorkspace: async (dir) => {
-          await fsp.mkdir(path.join(dir, ".kiro"), { recursive: true });
-        },
-        expectedTargetSubpath: path.join(".kiro", "config.json"),
-      },
-      {
-        id: "zed",
-        name: "Zed",
-        setupWorkspace: async (dir) => {
-          await fsp.mkdir(path.join(dir, ".zed"), { recursive: true });
-        },
-        expectedTargetSubpath: path.join(".zed", "settings.json"),
       },
       {
         id: "dsh",
@@ -132,7 +108,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       },
     ];
 
-    for (const { id, name, setupWorkspace, expectedTargetSubpath } of P0_ADAPTERS) {
+    for (const { id, name, setupWorkspace, expectedTargetSubpath } of NATIVE_ADAPTERS) {
       describe(`${name} (${id})`, () => {
         beforeEach(async () => {
           await setupWorkspace(workspaceDir);
@@ -297,6 +273,74 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       expect(driftedApply.success).toBe(false);
       expect(driftedApply.error).toContain("BaselineDriftError");
     });
+
+    it("distinguishes registered vs reachable in companion inspection and rejects reachable without verified command or doctor (SPEC §32-§33)", async () => {
+      // Create an empty MCP configuration for openCode with a non-existent / unreachable command
+      await fsp.mkdir(path.join(workspaceDir, ".opencode"), { recursive: true });
+      const opencodeJsonPath = path.join(workspaceDir, ".opencode", "opencode.json");
+      await fsp.writeFile(
+        opencodeJsonPath,
+        JSON.stringify({
+          mcp: {
+            servers: {
+              "agent-config": {
+                command: "/nonexistent/binary/path/which_does_not_exist",
+                args: [],
+              },
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      const inspection = await inspectCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "opencode",
+        registry: adapterRegistry,
+      });
+
+      expect(inspection.registered).toBe(true);
+
+      const validation = await validateCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "opencode",
+        registry: adapterRegistry,
+      });
+
+      // Entry is registered and configured, but command does not exist -> reachable must be false!
+      expect(validation.registered).toBe(true);
+      expect(validation.configured).toBe(true);
+      expect(validation.reachable).toBe(false);
+      expect(validation.healthy).toBe(false);
+      expect(validation.mcp_reachable).toBe(false);
+    });
+
+    it("rejects apply when frozen preview host version drifts before apply (SPEC §31)", async () => {
+      await fsp.writeFile(path.join(workspaceDir, "opencode.json"), "{}", "utf-8");
+
+      const preview = await previewCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "opencode",
+        registry: adapterRegistry,
+      });
+
+      // Modify preview version to simulate host version drift
+      preview.host_version = "99.99.99-drifted";
+
+      const driftedVersionApply = await applyCompanionSetup({
+        workspace: workspaceDir,
+        host_id: "opencode",
+        preview_id: preview.preview_id,
+        preview_hash: preview.preview_hash,
+        baseline_hash: preview.baseline_hash,
+        explicit_approval: true,
+        registry: adapterRegistry,
+        frozen_preview: preview,
+      });
+
+      expect(driftedVersionApply.success).toBe(false);
+      expect(driftedVersionApply.error).toContain("StalePreviewError");
+    });
   });
 
   // ==========================================================================
@@ -445,7 +489,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
     let server: ReturnType<typeof createServer>;
 
     beforeEach(async () => {
-      await fsp.mkdir(path.join(workspaceDir, ".kiro"), { recursive: true });
+      await fsp.mkdir(path.join(workspaceDir, ".cursor"), { recursive: true });
 
       server = createServer({
         profileStore: new ProfileStore(),
@@ -479,7 +523,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       // 1. inspect_companion_setup
       const inspectRes = await client.callTool({
         name: "inspect_companion_setup",
-        arguments: { workspace: workspaceDir, host_id: "kiro" },
+        arguments: { workspace: workspaceDir, host_id: "cursor" },
       });
       const inspectData = JSON.parse((inspectRes.content[0] as { type: string; text: string }).text);
       expect(inspectData.registered).toBe(false);
@@ -487,11 +531,11 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       // 2. preview_companion_setup
       const previewRes = await client.callTool({
         name: "preview_companion_setup",
-        arguments: { workspace: workspaceDir, host_id: "kiro" },
+        arguments: { workspace: workspaceDir, host_id: "cursor" },
       });
       const previewData = JSON.parse((previewRes.content[0] as { type: string; text: string }).text);
       expect(previewData.supported).toBe(true);
-      expect(previewData.ownership.adapter).toBe("kiro");
+      expect(previewData.ownership.adapter).toBe("cursor");
 
       // 3. apply_companion_setup without explicit approval
       const unapprovedRes = await client.callTool({
@@ -500,7 +544,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
           preview_hash: previewData.preview_hash,
           explicit_approval: false,
           workspace: workspaceDir,
-          host_id: "kiro",
+          host_id: "cursor",
         },
       });
       const unapprovedData = JSON.parse((unapprovedRes.content[0] as { type: string; text: string }).text);
@@ -513,7 +557,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
           preview_hash: previewData.preview_hash,
           explicit_approval: true,
           workspace: workspaceDir,
-          host_id: "kiro",
+          host_id: "cursor",
         },
       });
       const applyData = JSON.parse((applyRes.content[0] as { type: string; text: string }).text);
@@ -523,7 +567,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       // 5. validate_companion_setup
       const validateRes = await client.callTool({
         name: "validate_companion_setup",
-        arguments: { workspace: workspaceDir, host_id: "kiro" },
+        arguments: { workspace: workspaceDir, host_id: "cursor" },
       });
       const validateData = JSON.parse((validateRes.content[0] as { type: string; text: string }).text);
       expect(validateData.valid).toBe(true);

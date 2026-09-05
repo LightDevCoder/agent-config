@@ -28,10 +28,24 @@ export async function handleApplyConfiguration(
 
   const preview = validation.preview;
 
-  // 2. Resolve adapter for the target workspace
-  const adapter = await context.adapterRegistry.resolveAdapter(workspace);
+  // 2. Resolve adapter directly from the approved frozen preview (§26, §27)
+  // Invariant: Apply may NOT re-derive the approved target or scope!
+  const adapter =
+    context.adapterRegistry.getAdapter(preview.adapter_id) ||
+    (await context.adapterRegistry.resolveAdapter(workspace));
 
-  // 3. Apply via adapter
+  // 3. Stale preview check: host identity & version check (§31)
+  if (preview.host_version) {
+    const currentVersionInfo = await adapter.inspectVersion(workspace);
+    const currentVer = currentVersionInfo.version || "unknown";
+    if (currentVer !== preview.host_version) {
+      throw new Error(
+        `Stale preview: host version drifted from '${preview.host_version}' to '${currentVer}'. Refusing to apply stale preview. Please re-preview.`
+      );
+    }
+  }
+
+  // 4. Apply via adapter using exact rendered mutation targets
   const applyResult = await adapter.applyConfiguration(
     params.preview_id,
     preview.rendered,
@@ -43,7 +57,7 @@ export async function handleApplyConfiguration(
     );
   }
 
-  // 4. Mark preview as applied so it cannot be reapplied
+  // 5. Mark preview as applied so it cannot be reapplied
   context.previewManager.markApplied(params.preview_id);
 
   const appliedTargets =

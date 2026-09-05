@@ -147,6 +147,33 @@ export interface ExtendedPreviewResult {
   raw?: unknown;
 }
 
+/**
+ * Canonical Frozen Mutation Preview contract (§26, §27).
+ * Prevents apply from re-deriving targets, losing scope, or mutating drifted baselines.
+ */
+export interface FrozenMutationPreview {
+  preview_id: string;
+  preview_hash: string;
+  adapter_id: string;
+  host_id?: string;
+  host_identity: string;
+  host_version?: string;
+  scope: "project" | "user" | "global";
+  target: string;
+  baseline_identity?: string;
+  baseline_hash: string | null;
+  mutation: {
+    diff: string;
+    patch?: string;
+    command?: string;
+    args?: string[];
+    files?: Array<{ path: string; content: string }>;
+  };
+  created_at: string;
+  expires_at: string;
+  applied?: boolean;
+}
+
 // ============================================================================
 // 6. apply_configuration
 // ============================================================================

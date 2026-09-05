@@ -136,7 +136,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["host-runtime", "host-config", "adapter-probe", "fallback-default"]
+          "enum": ["host-runtime", "host-config", "host-schema", "adapter-probe", "user-confirmed"]
         },
         "locator": {
           "type": "string",
