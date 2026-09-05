@@ -8,6 +8,7 @@
     "agent-config": "dist/server/index.js"
   },
   "scripts": {
+    "prebuild": "rm -rf dist",
     "build": "tsc",
     "watch": "tsc -w",
     "start": "node dist/server/index.js",
