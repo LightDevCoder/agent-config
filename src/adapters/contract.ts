@@ -286,3 +286,18 @@ export async function resolveHostReasoningPolicy(
     host_value: selectedValue,
   };
 }
+
+/**
+ * Extracts the effective reasoning policy or discrete effort string from an execution context.
+ * Inspects canonical reasoning object first, falling back to legacy effort/effort_policy if present.
+ */
+export function extractReasoningPolicy(ctx?: any): string | undefined {
+  if (!ctx || typeof ctx !== "object") return undefined;
+  if (ctx.reasoning?.resolved?.host_value !== undefined) {
+    return String(ctx.reasoning.resolved.host_value);
+  }
+  if (ctx.reasoning?.policy) {
+    return ctx.reasoning.policy;
+  }
+  return ctx.effort || ctx.effort_policy;
+}

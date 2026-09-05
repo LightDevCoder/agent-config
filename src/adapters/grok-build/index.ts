@@ -20,6 +20,7 @@ import {
   ResolvedReasoningPolicy,
   CapabilityState,
   HostModelEvidence,
+  extractReasoningPolicy,
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
@@ -943,10 +944,8 @@ export class GrokBuildAdapter implements HostAdapter {
     }
 
     const targetEffort =
-      plan.execution?.effort ||
-      plan.execution?.effort_policy ||
-      plan.controller?.effort ||
-      plan.controller?.effort_policy ||
+      extractReasoningPolicy(plan.execution) ||
+      extractReasoningPolicy(plan.controller) ||
       (profile?.single_model?.execution_effort
         ? "value" in profile.single_model.execution_effort
           ? profile.single_model.execution_effort.value
@@ -980,7 +979,7 @@ export class GrokBuildAdapter implements HostAdapter {
           existingAgentContent = await fsp.readFile(agentFilePath, "utf-8");
         }
 
-        const itemEffort = item.effort || item.effort_policy;
+        const itemEffort = extractReasoningPolicy(item);
         let newAgentContent =
           `name = "${item.ticket_id}"\n` +
           `model = "${item.model}"\n`;
@@ -1078,10 +1077,8 @@ export class GrokBuildAdapter implements HostAdapter {
 
     const expectedModel = expected.execution?.model || expected.controller?.model;
     const expectedEffort =
-      expected.execution?.effort ||
-      expected.execution?.effort_policy ||
-      expected.controller?.effort ||
-      expected.controller?.effort_policy;
+      extractReasoningPolicy(expected.execution) ||
+      extractReasoningPolicy(expected.controller);
 
     const runtimeInspect = await this.runGrokInspect(workspaceRoot);
     const layered = this.readLayeredConfig(workspaceRoot);
@@ -1117,7 +1114,7 @@ export class GrokBuildAdapter implements HostAdapter {
           if (parsed.model !== item.model) {
             errors.push(`Worker agent '${item.ticket_id}' model mismatch: expected '${item.model}', actual '${parsed.model}'`);
           }
-          const itemEffort = item.effort || item.effort_policy;
+          const itemEffort = extractReasoningPolicy(item);
           if (itemEffort && parsed.reasoning_effort !== itemEffort) {
             errors.push(
               `Worker agent '${item.ticket_id}' reasoning effort mismatch: expected '${itemEffort}', actual '${parsed.reasoning_effort}'`

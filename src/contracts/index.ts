@@ -1,6 +1,44 @@
 import { z } from "zod";
-import { Profile, ProfileSchema, ExecutionConfig, ExecutionConfigSchema } from "../profile/schema.js";
+import {
+  Profile,
+  ProfileSchema,
+  ExecutionConfig,
+  ExecutionConfigSchema,
+  Reasoning,
+  ReasoningSchema,
+  ReadinessState,
+  ReadinessStateSchema,
+  ModeState,
+  ModeStateSchema,
+  SetupState,
+  SetupStateSchema,
+  HandoffTarget,
+  HandoffTargetSchema,
+  AgentConfigResult,
+  AgentConfigResultSchema,
+  createAgentConfigResult,
+} from "../profile/schema.js";
 import { HostCapabilities, CompanionRegistrationStatus } from "../adapters/contract.js";
+
+export {
+  Profile,
+  ProfileSchema,
+  ExecutionConfig,
+  ExecutionConfigSchema,
+  Reasoning,
+  ReasoningSchema,
+  ReadinessState,
+  ReadinessStateSchema,
+  ModeState,
+  ModeStateSchema,
+  SetupState,
+  SetupStateSchema,
+  HandoffTarget,
+  HandoffTargetSchema,
+  AgentConfigResult,
+  AgentConfigResultSchema,
+  createAgentConfigResult,
+};
 
 /**
  * Authoritative protocol and schema versions.
@@ -147,6 +185,27 @@ export interface ExtendedPreviewResult {
   raw?: unknown;
 }
 
+export interface FileMutationOperation {
+  type: "file";
+  target: string;
+  action: "create" | "update" | "delete";
+  diff: string;
+  content?: string;
+  baseline_hash: string | null;
+  reversible: boolean;
+}
+
+export interface NonFileMutationOperation {
+  type: "native" | "command";
+  description: string;
+  command?: string;
+  args?: string[];
+  reversible: boolean;
+  undo_action?: { command: string; args: string[] };
+}
+
+export type MutationOperation = FileMutationOperation | NonFileMutationOperation;
+
 /**
  * Canonical Frozen Mutation Preview contract (§26, §27).
  * Prevents apply from re-deriving targets, losing scope, or mutating drifted baselines.
@@ -169,6 +228,7 @@ export interface FrozenMutationPreview {
     args?: string[];
     files?: Array<{ path: string; content: string }>;
   };
+  operations?: MutationOperation[];
   created_at: string;
   expires_at: string;
   applied?: boolean;

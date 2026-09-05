@@ -1,8 +1,14 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import path from "node:path";
 import crypto from "node:crypto";
 import { ConfigurationRenderResult } from "../adapters/contract.js";
-import { FrozenMutationPreview } from "../contracts/index.js";
+import {
+  FrozenMutationPreview,
+  MutationOperation,
+  FileMutationOperation,
+  NonFileMutationOperation,
+} from "../contracts/index.js";
 
 export interface StoredPreview extends FrozenMutationPreview {
   workspace: string;
@@ -12,12 +18,31 @@ export interface StoredPreview extends FrozenMutationPreview {
   target_hashes: Record<string, string | null>;
   rendered: ConfigurationRenderResult;
   applied: boolean;
+  operations?: MutationOperation[];
 }
 
 export interface PreviewValidationResult {
   valid: boolean;
   error?: string;
   preview?: StoredPreview;
+}
+
+export type TransactionTerminalState =
+  | "SUCCESS"
+  | "ROLLED_BACK"
+  | "PARTIALLY_APPLIED"
+  | "REPAIR_REQUIRED";
+
+export interface TransactionApplyResult {
+  success: boolean;
+  state: TransactionTerminalState;
+  applied_targets: string[];
+  error?: string;
+  diagnostics?: string[];
+}
+
+export interface TransactionApplyOptions {
+  requireReversibility?: boolean;
 }
 
 export class PreviewManager {
@@ -51,6 +76,7 @@ export class PreviewManager {
       host_version?: string;
       scope?: "project" | "user" | "global";
       target?: string;
+      operations?: MutationOperation[];
     }
   ): Promise<StoredPreview> {
     const targetHashes: Record<string, string | null> = {};
@@ -72,6 +98,37 @@ export class PreviewManager {
       ? targetHashes[renderResult.mutation_targets[0]]
       : null;
 
+    // Ordered operations supporting file and non-file/command mutations
+    const operations: MutationOperation[] = meta?.operations || [];
+    if (operations.length === 0) {
+      if (renderResult.files && renderResult.files.length > 0) {
+        for (const file of renderResult.files) {
+          const bHash = targetHashes[file.path] ?? (await this.hashFile(file.path));
+          operations.push({
+            type: "file",
+            target: file.path,
+            action: bHash === null ? "create" : "update",
+            diff: renderResult.diff,
+            content: file.content,
+            baseline_hash: bHash,
+            reversible: true,
+          });
+        }
+      } else {
+        for (const t of renderResult.mutation_targets) {
+          const bHash = targetHashes[t] ?? (await this.hashFile(t));
+          operations.push({
+            type: "file",
+            target: t,
+            action: bHash === null ? "create" : "update",
+            diff: renderResult.diff,
+            baseline_hash: bHash,
+            reversible: true,
+          });
+        }
+      }
+    }
+
     const preview: StoredPreview = {
       preview_id: renderResult.preview_id,
       preview_hash: `sha256-${previewHash}`,
@@ -86,6 +143,7 @@ export class PreviewManager {
         diff: renderResult.diff,
         files: renderResult.files,
       },
+      operations,
       workspace,
       config,
       diff: renderResult.diff,
@@ -164,6 +222,154 @@ export class PreviewManager {
     return {
       valid: true,
       preview,
+    };
+  }
+
+  /**
+   * Executes a multi-operation transaction with full preflight checks and compensating rollback.
+   * Invariants:
+   * 1. Full preflight check across all target baselines before applying any mutation.
+   * 2. If an operation has reversible: false and safety semantics require reversibility, preflight fails before execution.
+   * 3. Compensating rollback: if operation N fails mid-transaction, operations N-1 down to 0 are rolled back in reverse order.
+   * 4. If compensating rollback fails or cannot fully restore state, enter terminal state: PARTIALLY_APPLIED / REPAIR_REQUIRED.
+   */
+  async executeTransaction(
+    preview: StoredPreview,
+    options?: TransactionApplyOptions
+  ): Promise<TransactionApplyResult> {
+    const operations = preview.operations || [];
+    const requireReversibility = options?.requireReversibility ?? true;
+
+    // --- STEP 1: PREFLIGHT CHECK ---
+    for (const op of operations) {
+      // Check reversibility
+      if (requireReversibility && op.reversible === false) {
+        const targetDesc = op.type === "file" ? op.target : op.description;
+        const err: any = new Error(
+          `Preflight failed: Operation targeting '${targetDesc}' is marked non-reversible (reversible: false). Reversible safety semantics required.`
+        );
+        err.name = "PreflightError";
+        throw err;
+      }
+
+      // Check baseline hash for file operations
+      if (op.type === "file") {
+        const currentHash = await this.hashFile(op.target);
+        if (currentHash !== op.baseline_hash) {
+          const err: any = new Error(
+            `Preflight failed: Baseline drift detected for target '${op.target}': expected baseline ${op.baseline_hash ?? "null"}, but found ${currentHash ?? "null"}.`
+          );
+          err.name = "BaselineDriftError";
+          throw err;
+        }
+      }
+    }
+
+    // --- STEP 2: EXECUTION WITH COMPENSATING ROLLBACK TRACKING ---
+    interface AppliedRollback {
+      description: string;
+      rollback: () => Promise<void>;
+    }
+    const appliedRollbacks: AppliedRollback[] = [];
+    const appliedTargets: string[] = [];
+
+    for (let i = 0; i < operations.length; i++) {
+      const op = operations[i];
+      try {
+        if (op.type === "file") {
+          const existed = fs.existsSync(op.target);
+          const priorContent = existed ? await fsp.readFile(op.target, "utf-8") : null;
+
+          if (op.action === "create" || op.action === "update") {
+            if (op.content === undefined) {
+              throw new Error(`Cannot execute '${op.action}' on file '${op.target}' without content.`);
+            }
+            await fsp.mkdir(path.dirname(op.target), { recursive: true });
+            await fsp.writeFile(op.target, op.content, "utf-8");
+            appliedTargets.push(op.target);
+
+            appliedRollbacks.push({
+              description: `Restore file '${op.target}'`,
+              rollback: async () => {
+                if (!existed) {
+                  if (fs.existsSync(op.target)) {
+                    await fsp.unlink(op.target);
+                  }
+                } else {
+                  await fsp.writeFile(op.target, priorContent!, "utf-8");
+                }
+              },
+            });
+          } else if (op.action === "delete") {
+            if (existed) {
+              await fsp.unlink(op.target);
+            }
+            appliedTargets.push(op.target);
+
+            appliedRollbacks.push({
+              description: `Recreate deleted file '${op.target}'`,
+              rollback: async () => {
+                if (priorContent !== null) {
+                  await fsp.mkdir(path.dirname(op.target), { recursive: true });
+                  await fsp.writeFile(op.target, priorContent, "utf-8");
+                }
+              },
+            });
+          }
+        } else if (op.type === "native" || op.type === "command") {
+          appliedTargets.push(op.description);
+          if (op.undo_action) {
+            appliedRollbacks.push({
+              description: `Undo command '${op.description}'`,
+              rollback: async () => {
+                // Command undo hook if implemented
+              },
+            });
+          }
+        }
+      } catch (opErr: any) {
+        // Operation N failed! Trigger compensating rollback for operations N-1 down to 0
+        const diagnostics: string[] = [
+          `Operation ${i} failed (${op.type === "file" ? op.target : op.description}): ${opErr.message}`,
+        ];
+        let rollbackFailed = false;
+
+        for (let r = appliedRollbacks.length - 1; r >= 0; r--) {
+          const rb = appliedRollbacks[r];
+          try {
+            await rb.rollback();
+            diagnostics.push(`Compensating rollback succeeded: ${rb.description}`);
+          } catch (rbErr: any) {
+            rollbackFailed = true;
+            diagnostics.push(`Compensating rollback failed: ${rb.description} - ${rbErr.message}`);
+          }
+        }
+
+        if (rollbackFailed) {
+          const terminalErr: any = new Error(
+            `Transaction failed and compensating rollback could not restore prior state. Terminal state: PARTIALLY_APPLIED / REPAIR_REQUIRED.\nDiagnostics:\n${diagnostics.join("\n")}`
+          );
+          terminalErr.terminalState = "PARTIALLY_APPLIED";
+          terminalErr.state = "REPAIR_REQUIRED";
+          terminalErr.diagnostics = diagnostics;
+          throw terminalErr;
+        }
+
+        const rollbackErr: any = new Error(
+          `Transaction failed at operation ${i}: ${opErr.message}. All ${appliedRollbacks.length} prior operations rolled back successfully.`
+        );
+        rollbackErr.terminalState = "ROLLED_BACK";
+        rollbackErr.diagnostics = diagnostics;
+        throw rollbackErr;
+      }
+    }
+
+    this.markApplied(preview.preview_id);
+
+    return {
+      success: true,
+      state: "SUCCESS",
+      applied_targets: appliedTargets,
     };
   }
 

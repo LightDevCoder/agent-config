@@ -19,6 +19,7 @@ import {
   CompanionRegistrationStatus,
   CompanionRegistrationPreview,
   ResolvedReasoningPolicy,
+  extractReasoningPolicy,
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
@@ -674,10 +675,8 @@ export class GeminiCliAdapter implements HostAdapter {
     currentText = jsonc.applyEdits(currentText, edits);
 
     const targetEffort =
-      plan.execution?.effort ||
-      plan.execution?.effort_policy ||
-      plan.controller?.effort ||
-      plan.controller?.effort_policy;
+      extractReasoningPolicy(plan.execution) ||
+      extractReasoningPolicy(plan.controller);
 
     if (targetEffort) {
       edits = jsonc.modify(currentText, ["reasoning_effort"], targetEffort, formatting);

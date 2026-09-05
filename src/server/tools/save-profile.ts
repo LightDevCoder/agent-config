@@ -23,9 +23,12 @@ export async function handleSaveProfile(
   }
 
   const parsed = ProfileSchema.parse(params.profile);
-  const targetWorkspace = path.resolve(
-    params.workspace || parsed.scope.workspace || process.cwd()
-  );
+  const isGlobal = parsed.scope.type === "global";
+  const targetWorkspace = isGlobal
+    ? "global"
+    : path.resolve(
+        params.workspace || parsed.scope.workspace || process.cwd()
+      );
 
   // Synchronize scope.workspace if workspace override was specified
   const profileToSave: Profile = {
@@ -42,11 +45,15 @@ export async function handleSaveProfile(
   }
 
   // Inspect current host capabilities to validate inventory & efforts
+  const inspectionWorkspace = isGlobal
+    ? (params.workspace ? path.resolve(params.workspace) : process.cwd())
+    : targetWorkspace;
+
   const adapter = await context.adapterRegistry.resolveAdapter(
-    targetWorkspace,
-    profileToSave.host.id
+    inspectionWorkspace,
+    profileToSave.host.adapter
   );
-  const hostCapabilities = await adapter.inspectCapabilities(targetWorkspace);
+  const hostCapabilities = await adapter.inspectCapabilities(inspectionWorkspace);
 
   // Save atomically with validation against host capabilities
   await context.profileStore.saveProfile(profileToSave, {

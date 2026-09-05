@@ -66,22 +66,6 @@
       "enum": ["single", "multi"],
       "description": "Operating mode: single fixed model harness (first-class) or selectable multi-model harness."
     },
-    "models": {
-      "type": "object",
-      "description": "Observed host availability snapshot, decoupled from user tier preferences.",
-      "properties": {
-        "available": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "uniqueItems": true,
-          "description": "List of model IDs confirmed available on the host at setup time."
-        }
-      },
-      "additionalProperties": false
-    },
     "single_model": {
       "type": "object",
       "description": "Configuration for single-model harnesses. Defines execution and review effort policies without artificial tier routing.",

@@ -19,6 +19,7 @@ import {
   CompanionRegistrationPreview,
   ResolvedReasoningPolicy,
   resolveHostReasoningPolicy,
+  extractReasoningPolicy,
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
@@ -1185,10 +1186,8 @@ export class DshAdapter implements HostAdapter {
     }
 
     const targetEffort =
-      plan.execution?.effort ||
-      plan.execution?.effort_policy ||
-      plan.controller?.effort ||
-      plan.controller?.effort_policy;
+      extractReasoningPolicy(plan.execution) ||
+      extractReasoningPolicy(plan.controller);
 
     let existingContent: string | null = null;
     let currentText =
@@ -1251,8 +1250,9 @@ export class DshAdapter implements HostAdapter {
         const profileVal: Record<string, any> = {
           model: item.model,
         };
-        if (item.effort || item.effort_policy) {
-          profileVal.reasoning_effort = item.effort || item.effort_policy;
+        const itemEffort = extractReasoningPolicy(item);
+        if (itemEffort) {
+          profileVal.reasoning_effort = itemEffort;
         }
         const profileEdits = jsonc.modify(
           currentText,
@@ -1392,10 +1392,8 @@ export class DshAdapter implements HostAdapter {
       }
 
       const expectedEffort =
-        expected.execution?.effort ||
-        expected.execution?.effort_policy ||
-        expected.controller?.effort ||
-        expected.controller?.effort_policy;
+        extractReasoningPolicy(expected.execution) ||
+        extractReasoningPolicy(expected.controller);
 
       const actualEffort =
         parsed.reasoning_effort ||

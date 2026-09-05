@@ -18,6 +18,7 @@ import {
   CompanionRegistrationStatus,
   CompanionRegistrationPreview,
   ResolvedReasoningPolicy,
+  extractReasoningPolicy,
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
@@ -720,10 +721,8 @@ export class OpenCodeAdapter implements HostAdapter {
     }
 
     const targetEffort =
-      plan.execution?.effort ||
-      plan.execution?.effort_policy ||
-      plan.controller?.effort ||
-      plan.controller?.effort_policy ||
+      extractReasoningPolicy(plan.execution) ||
+      extractReasoningPolicy(plan.controller) ||
       (profile?.single_model?.execution_effort
         ? "value" in profile.single_model.execution_effort
           ? profile.single_model.execution_effort.value
@@ -766,9 +765,10 @@ export class OpenCodeAdapter implements HostAdapter {
     // 3. If decomposed with work_items, configure agents with model and variant
     if (plan.work_items && plan.work_items.length > 0) {
       for (const item of plan.work_items) {
+        const itemEffort = extractReasoningPolicy(item);
         const itemVariant = this.resolveVariantForModel(
           item.model,
-          item.effort_policy || item.effort,
+          itemEffort,
           availableModels
         );
 
@@ -875,10 +875,8 @@ export class OpenCodeAdapter implements HostAdapter {
 
     // 2. Validate Main Variant (§75)
     const expectedEffort =
-      expected.execution?.effort ||
-      expected.execution?.effort_policy ||
-      expected.controller?.effort ||
-      expected.controller?.effort_policy;
+      extractReasoningPolicy(expected.execution) ||
+      extractReasoningPolicy(expected.controller);
 
     if (expectedEffort) {
       const resolvedMainVariant =
@@ -914,7 +912,7 @@ export class OpenCodeAdapter implements HostAdapter {
           }
 
           // Worker Variant
-          const itemEffort = item.effort || item.effort_policy;
+          const itemEffort = extractReasoningPolicy(item);
           if (itemEffort) {
             const resolvedWorkerVariant =
               this.resolveVariantForModel(item.model, itemEffort, availableModels);

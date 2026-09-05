@@ -70,12 +70,15 @@
     "controller": {
       "type": "object",
       "description": "Configuration for the controller/orchestrator context.",
-      "required": ["model", "effort", "context"],
+      "required": ["model", "context"],
       "properties": {
         "model": {
           "type": "string",
           "minLength": 1,
           "description": "Host model identifier assigned to the controller."
+        },
+        "reasoning": {
+          "$ref": "#/definitions/reasoning"
         },
         "effort": {
           "type": "string",
@@ -97,12 +100,15 @@
     "execution": {
       "type": "object",
       "description": "Primary execution configuration for single-pass tasks.",
-      "required": ["model", "effort", "context"],
+      "required": ["model", "context"],
       "properties": {
         "model": {
           "type": "string",
           "minLength": 1,
           "description": "Host model identifier assigned for implementation."
+        },
+        "reasoning": {
+          "$ref": "#/definitions/reasoning"
         },
         "effort": {
           "type": "string",
@@ -124,11 +130,14 @@
     "helper": {
       "type": "object",
       "description": "Optional helper configuration for research or query assistance in single-pass tasks.",
-      "required": ["model", "effort", "context"],
+      "required": ["model", "context"],
       "properties": {
         "model": {
           "type": "string",
           "minLength": 1
+        },
+        "reasoning": {
+          "$ref": "#/definitions/reasoning"
         },
         "effort": {
           "type": "string",
@@ -154,7 +163,7 @@
     "review": {
       "type": "object",
       "description": "Review context and model configuration. Configures review environment without determining formal pass/fail verdict.",
-      "required": ["strategy", "model", "effort", "context"],
+      "required": ["strategy", "model", "context"],
       "properties": {
         "strategy": {
           "type": "string",
@@ -174,6 +183,9 @@
           "type": "string",
           "minLength": 1,
           "description": "Host model identifier assigned for review."
+        },
+        "reasoning": {
+          "$ref": "#/definitions/reasoning"
         },
         "effort": {
           "type": "string",
@@ -223,6 +235,33 @@
   },
   "additionalProperties": false,
   "definitions": {
+    "reasoning": {
+      "type": "object",
+      "description": "Host-neutral reasoning configuration and resolved host binding.",
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["disabled", "enabled", "unsupported", "unknown"]
+        },
+        "policy": {
+          "type": "string",
+          "enum": ["highest-supported", "default", "lowest-supported", "custom"]
+        },
+        "resolved": {
+          "type": "object",
+          "required": ["host_field", "host_value"],
+          "properties": {
+            "host_field": { "type": "string" },
+            "host_value": {
+              "type": ["string", "number", "boolean"]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "work_item": {
       "type": "object",
       "description": "Execution specification for a single ticket within a decomposed plan.",
@@ -230,7 +269,6 @@
         "ticket_id",
         "difficulty",
         "model",
-        "effort",
         "context"
       ],
       "properties": {
@@ -253,6 +291,9 @@
           "type": "string",
           "minLength": 1,
           "description": "Host model identifier assigned to this work item."
+        },
+        "reasoning": {
+          "$ref": "#/definitions/reasoning"
         },
         "effort": {
           "type": "string",

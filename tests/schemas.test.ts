@@ -62,9 +62,6 @@ describe("Canonical JSON Schemas", () => {
         workspace: "/workspace/my-project",
       },
       model_mode: "single",
-      models: {
-        available: ["gpt-4o", "o3-mini"],
-      },
       single_model: {
         model: "o3-mini",
         execution_effort: {
@@ -93,9 +90,6 @@ describe("Canonical JSON Schemas", () => {
         workspace: "/workspace/my-project",
       },
       model_mode: "multi",
-      models: {
-        available: ["gpt-4o-mini", "gpt-4o", "o3-mini"],
-      },
       tiers: {
         routine: {
           model: "gpt-4o-mini",
@@ -162,6 +156,17 @@ describe("Canonical JSON Schemas", () => {
       };
       expect(validateProfile(globalProfile)).toBe(true);
       expect(() => ProfileSchema.parse(globalProfile)).not.toThrow();
+    });
+
+    it("safely migrates and strips legacy input containing models.available without failing", () => {
+      const legacyProfile = {
+        ...baseValidSingleModel,
+        models: {
+          available: ["gpt-4o", "o3-mini"],
+        },
+      };
+      const parsed = ProfileSchema.parse(legacyProfile);
+      expect((parsed as any).models).toBeUndefined();
     });
 
     it("rejects multi-model mode if tiers are missing", () => {

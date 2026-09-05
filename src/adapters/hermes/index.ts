@@ -20,6 +20,7 @@ import {
   ResolvedReasoningPolicy,
   CapabilityState,
   HostModelEvidence,
+  extractReasoningPolicy,
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
@@ -656,10 +657,8 @@ export class HermesAdapter implements HostAdapter {
     }
 
     const targetEffort =
-      plan.execution?.effort ||
-      plan.execution?.effort_policy ||
-      plan.controller?.effort ||
-      plan.controller?.effort_policy ||
+      extractReasoningPolicy(plan.execution) ||
+      extractReasoningPolicy(plan.controller) ||
       (profile?.single_model?.execution_effort
         ? "value" in profile.single_model.execution_effort
           ? profile.single_model.execution_effort.value
@@ -764,10 +763,8 @@ export class HermesAdapter implements HostAdapter {
 
     const expectedModel = expected.execution?.model || expected.controller?.model;
     const expectedEffort =
-      expected.execution?.effort ||
-      expected.execution?.effort_policy ||
-      expected.controller?.effort ||
-      expected.controller?.effort_policy;
+      extractReasoningPolicy(expected.execution) ||
+      extractReasoningPolicy(expected.controller);
 
     const configPath = this.resolveConfigPath(workspaceRoot);
     const cfg = this.readConfig(configPath);

@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import crypto from "node:crypto";
 import { HostAdapter, CompanionRegistrationStatus, CompanionRegistrationPreview, ValidationResult } from "../adapters/contract.js";
 import { AdapterRegistry, defaultAdapterRegistry } from "../adapters/registry.js";
-import { FrozenMutationPreview } from "../contracts/index.js";
+import { FrozenMutationPreview, MutationOperation } from "../contracts/index.js";
 
 /**
  * Inspection details for companion setup (§14, §15, §19).
@@ -225,6 +225,30 @@ export async function previewCompanionSetup(options?: {
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + 15 * 60 * 1000).toISOString();
 
+  const operations: MutationOperation[] = [];
+  if (rawPreview.files && rawPreview.files.length > 0) {
+    for (const file of rawPreview.files) {
+      operations.push({
+        type: "file",
+        target: file.path,
+        action: baselineHash === null ? "create" : "update",
+        diff,
+        content: file.content,
+        baseline_hash: baselineHash,
+        reversible: true,
+      });
+    }
+  } else if (targetFile) {
+    operations.push({
+      type: "file",
+      target: targetFile,
+      action: baselineHash === null ? "create" : "update",
+      diff,
+      baseline_hash: baselineHash,
+      reversible: true,
+    });
+  }
+
   return {
     supported: rawPreview.supported,
     adapter_id: adapterId,
@@ -241,6 +265,7 @@ export async function previewCompanionSetup(options?: {
       patch: diff,
       files: rawPreview.files,
     },
+    operations,
     created_at: createdAt.toISOString(),
     expires_at: expiresAt,
     diff,
@@ -295,6 +320,38 @@ export async function applyCompanionSetup(
         message: `Stale preview: host version drifted from '${frozen.host_version}' to '${currentVer}'. Refusing to apply stale preview. Please re-preview.`,
         error: "StalePreviewError: Host version has changed since preview generation.",
       };
+    }
+  }
+
+  // Multi-operation preflight: reversibility & baseline verification across all operations (§26, §27)
+  if (frozen?.operations && frozen.operations.length > 0) {
+    for (const op of frozen.operations) {
+      if (op.reversible === false) {
+        return {
+          success: false,
+          preview_id: options.preview_id || options.preview_hash,
+          preview_hash: options.preview_hash,
+          applied_targets: [],
+          message: `Preflight failed: Operation targeting '${op.type === "file" ? op.target : op.description}' is marked non-reversible. Reversible safety semantics required.`,
+          error: "PreflightError: Non-reversible operation rejected.",
+        };
+      }
+      if (op.type === "file" && op.baseline_hash !== undefined) {
+        const fileExists = fs.existsSync(op.target);
+        const curHash = fileExists
+          ? crypto.createHash("sha256").update(await fsp.readFile(op.target, "utf-8")).digest("hex")
+          : null;
+        if (curHash !== op.baseline_hash) {
+          return {
+            success: false,
+            preview_id: options.preview_id || options.preview_hash,
+            preview_hash: options.preview_hash,
+            applied_targets: [],
+            message: `Baseline hash drift detected for '${op.target}': expected ${op.baseline_hash}, found ${curHash}.`,
+            error: "BaselineDriftError: Target configuration was modified concurrently.",
+          };
+        }
+      }
     }
   }
 

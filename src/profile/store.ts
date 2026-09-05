@@ -9,6 +9,11 @@ import { HostCapabilities } from "../adapters/contract.js";
 
 export interface ProfileStoreOptions {
   baseDir?: string;
+  fallbackToGlobal?: boolean;
+}
+
+export interface GetProfileOptions {
+  fallbackToGlobal?: boolean;
 }
 
 export interface SaveProfileOptions {
@@ -20,8 +25,10 @@ export interface SaveProfileOptions {
  */
 export class ProfileStore {
   readonly baseDir: string;
+  readonly fallbackToGlobal: boolean;
 
   constructor(options?: ProfileStoreOptions) {
+    this.fallbackToGlobal = options?.fallbackToGlobal ?? false;
     if (options?.baseDir) {
       this.baseDir = path.resolve(options.baseDir);
     } else if (process.env.AGENT_CONFIG_PROFILES_DIR) {
@@ -74,10 +81,9 @@ export class ProfileStore {
   }
 
   /**
-   * Reads and validates stored profile. Returns null if not found.
+   * Helper to read, validate, and parse a stored profile file.
    */
-  async getProfile(hostId: string, workspace: string): Promise<Profile | null> {
-    const filePath = this.getProfilePath(hostId, workspace);
+  private async readStoredProfile(filePath: string): Promise<Profile | null> {
     if (!fs.existsSync(filePath)) {
       return null;
     }
@@ -101,6 +107,40 @@ export class ProfileStore {
     }
 
     return ProfileSchema.parse(data);
+  }
+
+  /**
+   * Reads and validates stored profile.
+   * Explicit lookup precedence: Project profile -> Global profile (if fallback policy enabled or requested) -> null.
+   */
+  async getProfile(
+    hostId: string,
+    workspace: string,
+    options?: GetProfileOptions
+  ): Promise<Profile | null> {
+    if (workspace === "global") {
+      return this.readStoredProfile(this.getProfilePath(hostId, "global"));
+    }
+
+    // 1. Check project profile
+    const projectPath = this.getProfilePath(hostId, workspace);
+    const projectProfile = await this.readStoredProfile(projectPath);
+    if (projectProfile) {
+      return projectProfile;
+    }
+
+    // 2. Check global profile if fallback policy enabled or requested
+    const shouldFallback = options?.fallbackToGlobal ?? this.fallbackToGlobal;
+    if (shouldFallback) {
+      const globalPath = this.getProfilePath(hostId, "global");
+      const globalProfile = await this.readStoredProfile(globalPath);
+      if (globalProfile) {
+        return globalProfile;
+      }
+    }
+
+    // 3. Missing
+    return null;
   }
 
   /**

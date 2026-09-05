@@ -17,6 +17,7 @@ import {
   CompanionRegistrationStatus,
   CompanionRegistrationPreview,
   ResolvedReasoningPolicy,
+  extractReasoningPolicy,
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
@@ -803,10 +804,8 @@ export class CodexAdapter implements HostAdapter {
     }
 
     const targetEffort =
-      plan.execution?.effort ||
-      plan.execution?.effort_policy ||
-      plan.controller?.effort ||
-      plan.controller?.effort_policy ||
+      extractReasoningPolicy(plan.execution) ||
+      extractReasoningPolicy(plan.controller) ||
       (profile?.single_model?.execution_effort
         ? "value" in profile.single_model.execution_effort
           ? profile.single_model.execution_effort.value
@@ -846,7 +845,7 @@ export class CodexAdapter implements HostAdapter {
           existingAgentContent = await fsp.readFile(agentFilePath, "utf-8");
         }
 
-        const itemEffort = item.effort || item.effort_policy;
+        const itemEffort = extractReasoningPolicy(item);
         let newAgentContent =
           `name = "${item.ticket_id}"\n` +
           `model = "${item.model}"\n`;
@@ -934,10 +933,8 @@ export class CodexAdapter implements HostAdapter {
     const expectedModel =
       expected.execution?.model || expected.controller?.model;
     const expectedEffort =
-      expected.execution?.effort ||
-      expected.execution?.effort_policy ||
-      expected.controller?.effort ||
-      expected.controller?.effort_policy;
+      extractReasoningPolicy(expected.execution) ||
+      extractReasoningPolicy(expected.controller);
 
     const errors: string[] = [];
     if (expectedModel && actualModel !== expectedModel) {
@@ -979,7 +976,7 @@ export class CodexAdapter implements HostAdapter {
           }
 
           // Worker reasoning effort validation (§74)
-          const itemEffort = item.effort || item.effort_policy;
+          const itemEffort = extractReasoningPolicy(item);
           if (itemEffort) {
             const agentEffort = this.extractTomlString(agentContent, "model_reasoning_effort");
             if (agentEffort !== itemEffort) {
