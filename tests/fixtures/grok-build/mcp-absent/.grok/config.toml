@@ -1,0 +1,3 @@
+model = "grok-2"
+[mcp]
+servers = {}

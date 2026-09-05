@@ -1,0 +1,11 @@
+{
+  "model": "claude-3-7-sonnet",
+  "mcpServers": {
+    "agent-config": {
+      "command": "agent-config",
+      "args": [
+        "serve"
+      ]
+    }
+  }
+}

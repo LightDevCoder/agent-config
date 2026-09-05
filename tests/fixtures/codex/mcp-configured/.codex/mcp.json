@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agent-config": {
+      "command": "agent-config",
+      "args": [
+        "serve"
+      ]
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "model": "claude-3-7-sonnet",
+  "agents": {
+    "worker": {
+      "model": "claude-3-5-haiku"
+    }
+  },
+  "supported_models": [
+    "claude-3-7-sonnet",
+    "claude-3-5-haiku"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "cursor.model": "claude-3-7-sonnet",
+  "cursor.models": [
+    "claude-3-7-sonnet",
+    "gpt-4o"
+  ]
+}

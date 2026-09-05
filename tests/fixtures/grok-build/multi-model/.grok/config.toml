@@ -1,0 +1,3 @@
+model = "grok-2"
+worker_model = "grok-2-mini"
+models = ["grok-2", "grok-2-mini"]

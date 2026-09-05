@@ -1,0 +1,17 @@
+{
+  "plugins": [
+    {
+      "name": "llm-provider",
+      "active": true,
+      "models": [
+        "deepseek-chat",
+        "deepseek-reasoner"
+      ]
+    },
+    {
+      "name": "subagent-provider",
+      "active": true,
+      "worker_model": "deepseek-chat"
+    }
+  ]
+}

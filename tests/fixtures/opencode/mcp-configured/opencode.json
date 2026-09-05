@@ -1,0 +1,12 @@
+{
+  "model": "anthropic/claude-3-7-sonnet",
+  "mcp": {
+    "agent-config": {
+      "type": "local",
+      "command": "agent-config",
+      "args": [
+        "serve"
+      ]
+    }
+  }
+}

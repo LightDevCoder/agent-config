@@ -1,0 +1,21 @@
+{
+  "plugins": [
+    {
+      "name": "llm-provider",
+      "active": true,
+      "model": "deepseek-chat"
+    },
+    {
+      "name": "mcp-client",
+      "active": true,
+      "servers": {
+        "agent-config": {
+          "command": "agent-config",
+          "args": [
+            "serve"
+          ]
+        }
+      }
+    }
+  ]
+}

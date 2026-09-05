@@ -1,0 +1,3 @@
+model = "gpt-4o"
+worker_model = "o3-mini"
+supported_models = ["gpt-4o", "o3-mini", "o1"]

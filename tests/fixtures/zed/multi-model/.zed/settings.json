@@ -1,0 +1,13 @@
+{
+  "assistant": {
+    "default_model": {
+      "provider": "zed.dev",
+      "model": "claude-3-7-sonnet"
+    },
+    "profiles": {
+      "worker": {
+        "model": "claude-3-5-haiku"
+      }
+    }
+  }
+}

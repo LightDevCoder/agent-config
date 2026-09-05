@@ -1,0 +1,13 @@
+{
+  "model": "gemini-2.0-flash",
+  "mcp": {
+    "servers": {
+      "agent-config": {
+        "command": "agent-config",
+        "args": [
+          "serve"
+        ]
+      }
+    }
+  }
+}
