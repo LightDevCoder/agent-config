@@ -4,6 +4,8 @@ import { ProfileStore } from "../profile/store.js";
 import { AdapterRegistry, defaultAdapterRegistry } from "../adapters/registry.js";
 import { PreviewManager } from "./preview.js";
 import { registerAllTools, ToolContext } from "./tools/index.js";
+import { registerCompanionSetupTools } from "../setup/tools.js";
+import { runSetupCli } from "../setup/cli.js";
 
 /**
  * Agent Config companion runtime entry point.
@@ -15,6 +17,7 @@ export interface CreateServerOptions {
   profileStore?: ProfileStore;
   adapterRegistry?: AdapterRegistry;
   previewManager?: PreviewManager;
+  includeSetupTools?: boolean;
 }
 
 /**
@@ -34,6 +37,10 @@ export function createServer(options?: CreateServerOptions): McpServer {
 
   registerAllTools(server, context);
 
+  if (options?.includeSetupTools) {
+    registerCompanionSetupTools(server, context);
+  }
+
   return server;
 }
 
@@ -51,8 +58,18 @@ export async function startServer(options?: CreateServerOptions): Promise<void> 
 }
 
 if (process.argv[1] && process.argv[1].endsWith("index.js")) {
-  startServer().catch((error) => {
-    console.error("Failed to start agent-config server:", error);
-    process.exit(1);
-  });
+  if (process.argv[2] === "setup") {
+    runSetupCli(process.argv.slice(3)).then((code) => {
+      process.exit(code);
+    }).catch((error) => {
+      console.error("Setup error:", error);
+      process.exit(1);
+    });
+  } else {
+    startServer().catch((error) => {
+      console.error("Failed to start agent-config server:", error);
+      process.exit(1);
+    });
+  }
 }
+
