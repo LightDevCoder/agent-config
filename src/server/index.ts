@@ -1,5 +1,9 @@
+#!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import path from "path";
+import { fileURLToPath } from "url";
+import { realpathSync } from "fs";
 import { ProfileStore } from "../profile/store.js";
 import { AdapterRegistry, defaultAdapterRegistry } from "../adapters/registry.js";
 import { PreviewManager } from "./preview.js";
@@ -57,7 +61,21 @@ export async function startServer(options?: CreateServerOptions): Promise<void> 
   );
 }
 
-if (process.argv[1] && process.argv[1].endsWith("index.js")) {
+function isDirectExecution(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    const resolvedArgv = path.resolve(process.argv[1]);
+    const currentFile = fileURLToPath(import.meta.url);
+    if (resolvedArgv === currentFile) return true;
+    if (realpathSync(resolvedArgv) === realpathSync(currentFile)) return true;
+  } catch {
+    // Fallback to basename check if file resolution fails
+  }
+  const base = path.basename(process.argv[1]);
+  return base === "index.js" || base === "agent-config" || base.startsWith("agent-config");
+}
+
+if (isDirectExecution()) {
   if (process.argv[2] === "setup") {
     runSetupCli(process.argv.slice(3)).then((code) => {
       process.exit(code);

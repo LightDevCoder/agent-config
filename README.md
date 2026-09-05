@@ -27,9 +27,62 @@ agent-config (Companion MCP Server)
        └─ validate_configuration: Confirms applied state matches expected
        ▼
 Host Adapters
-       ├─ Native (9): Codex, Claude Code, Antigravity / Gemini CLI, DeepSeek Harness (DSH), OpenCode, ZCode, Cursor, Grok Build, Hermes
+       ├─ Native (9): Codex, Claude Code, Antigravity / agy, DeepSeek Harness (DSH), OpenCode, ZCode, Cursor, Grok Build, Hermes
        └─ Generic Adapter (plan-only fallback)
 ```
+
+## Installation
+
+### Recommended Global Installation
+
+Install directly via npm from GitHub:
+
+```bash
+npm install -g github:LightDevCoder/agent-config
+```
+
+Verify that the CLI is available and can probe the environment:
+
+```bash
+agent-config setup --check
+```
+
+*(Note: `setup --check` returns non-zero exit code when the companion is not yet registered or configured for the current workspace. This confirms the CLI is functional.)*
+
+### Build from Source
+
+If installing from a local clone or git source:
+
+```bash
+git clone https://github.com/LightDevCoder/agent-config.git
+cd agent-config
+npm ci
+npm run build
+npm install -g .
+```
+
+### Companion MCP Registration
+
+To preview and apply companion MCP registration into your current agent host configuration:
+
+```bash
+# Preview registration diff (read-only)
+agent-config setup --preview
+
+# Apply registration with explicit approval
+agent-config setup --apply --yes
+
+# Validate health after registration
+agent-config setup --check
+```
+
+### Relationship with `LightDevCoder/skills`
+
+- **Skill (`agent-config`):** Installed from [LightDevCoder/skills](https://github.com/LightDevCoder/skills):
+  ```bash
+  npx skills add LightDevCoder/skills --skill agent-config
+  ```
+- **Companion MCP Runtime (this repository):** Provides optional host inspection, profile persistence, configuration preview/apply, and health verification. Without the companion, the Skill remains fully functional in session-local, plan-only mode.
 
 ## Core Principles
 
@@ -82,7 +135,7 @@ Schemas are defined under `schemas/` and canonical contracts under `src/contract
 |---|---|---|---|---|
 | Codex CLI | Native | Project / User | `.codex/config.toml` (or `$CODEX_HOME/config.toml`) | `.codex/config.toml` (`[mcp_servers.agent-config]`) |
 | Claude Code | Native | Project / User | `.mcp.json` / `~/.claude.json` | `.mcp.json` (project) / `~/.claude.json` (user) |
-| Antigravity / Gemini CLI | Native | Project / User | `.gemini/config.json` | `.gemini/config.json` |
+| Antigravity / agy | Native | Project / User | `.gemini/config.json` | `.gemini/config.json` |
 | DeepSeek Harness (DSH) | Native | Project / User | `cordis.patch.yml` / `$DSH_HOME/profiles/<name>/cordis.patch.yml` | `@deepseek-ai/dsh-mcp-client` in `cordis.patch.yml` |
 | OpenCode | Native | Project / User | `opencode.json` / `opencode.jsonc` | `opencode.json` / `opencode.jsonc` |
 | ZCode | Native | Project / User | `<workspace>/.zcode/config.json` / `~/.zcode/cli/config.json` | `.zcode/config.json` (`mcp.servers["agent-config"]`) |
@@ -121,3 +174,7 @@ npm run build
 # Run test suite
 npm test
 ```
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
