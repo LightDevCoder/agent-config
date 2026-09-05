@@ -554,12 +554,11 @@ export class CodexAdapter implements HostAdapter {
 
     // Check project scope
     if (scope !== "user" && workspaceRoot) {
-      const projectTarget = path.join(workspace, ".codex", "mcp.json");
+      const projectTarget = path.join(workspace, ".codex", "config.toml");
       if (fs.existsSync(projectTarget)) {
         try {
           const content = fs.readFileSync(projectTarget, "utf-8");
-          const parsed = JSON.parse(content);
-          const serverConfig = parsed.mcpServers?.["agent-config"];
+          const serverConfig = this.extractTomlMcpServer(content, "agent-config");
           if (serverConfig) {
             return {
               registered: true,
@@ -581,12 +580,11 @@ export class CodexAdapter implements HostAdapter {
     // Check user scope
     if (scope !== "project") {
       const userCodexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-      const userTarget = path.join(userCodexHome, "mcp.json");
+      const userTarget = path.join(userCodexHome, "config.toml");
       if (fs.existsSync(userTarget)) {
         try {
           const content = fs.readFileSync(userTarget, "utf-8");
-          const parsed = JSON.parse(content);
-          const serverConfig = parsed.mcpServers?.["agent-config"];
+          const serverConfig = this.extractTomlMcpServer(content, "agent-config");
           if (serverConfig) {
             return {
               registered: true,
@@ -607,8 +605,8 @@ export class CodexAdapter implements HostAdapter {
 
     const defaultTarget =
       scope === "user" || !workspaceRoot
-        ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "mcp.json")
-        : path.join(workspace, ".codex", "mcp.json");
+        ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml")
+        : path.join(workspace, ".codex", "config.toml");
 
     return {
       registered: false,
@@ -625,43 +623,25 @@ export class CodexAdapter implements HostAdapter {
     const workspace = workspaceRoot || process.cwd();
     const targetFile =
       scope === "user" || !workspaceRoot
-        ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "mcp.json")
-        : path.join(workspace, ".codex", "mcp.json");
+        ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml")
+        : path.join(workspace, ".codex", "config.toml");
 
     let existingContent: string | null = null;
-    let parsed: any = { mcpServers: {} };
 
     if (fs.existsSync(targetFile)) {
       existingContent = await fsp.readFile(targetFile, "utf-8");
-      try {
-        parsed = JSON.parse(existingContent);
-        if (!parsed.mcpServers || typeof parsed.mcpServers !== "object") {
-          parsed.mcpServers = {};
-        }
-      } catch {
-        return {
-          supported: false,
-          adapter_id: this.id,
-          host_id: this.id,
-          scope: scope === "user" || !workspaceRoot ? "global" : "project",
-          target_file: targetFile,
-          mutation_targets: [],
-          error: `Existing Codex MCP configuration file at '${targetFile}' is invalid JSON.`,
-        };
-      }
     }
 
     const baselineHash = existingContent
       ? crypto.createHash("sha256").update(existingContent).digest("hex")
       : null;
 
-    parsed.mcpServers = parsed.mcpServers || {};
-    parsed.mcpServers["agent-config"] = {
-      command: "agent-config",
-      args: ["serve"],
-    };
-
-    const newContent = JSON.stringify(parsed, null, 2) + "\n";
+    const newContent = this.updateTomlMcpServer(
+      existingContent || "",
+      "agent-config",
+      "agent-config",
+      ["serve"]
+    );
     const diff = createUnifiedDiff(targetFile, existingContent, newContent);
     const previewId = `preview-companion-codex-${Date.now()}`;
     const previewHash = crypto.createHash("sha256").update(newContent).digest("hex");
@@ -1048,5 +1028,53 @@ export class CodexAdapter implements HostAdapter {
     }
     const trimmed = content.trim();
     return trimmed ? `${key} = ${quoted}\n${trimmed}\n` : `${key} = ${quoted}\n`;
+  }
+
+  private extractTomlMcpServer(
+    content: string,
+    name: string
+  ): { command: string; args: string[] } | null {
+    const sectionRegex = new RegExp(
+      `\\[(?:mcp_servers|mcpServers)\\.${name}\\]([\\s\\S]*?)(?=\\n\\[|\\r?\\n\\[|$)`
+    );
+    const match = content.match(sectionRegex);
+    if (!match) return null;
+
+    const sectionText = match[1];
+    const commandMatch = sectionText.match(/^\s*command\s*=\s*"([^"]+)"/m);
+    if (!commandMatch) return null;
+
+    const command = commandMatch[1];
+    let args: string[] = [];
+    const argsMatch = sectionText.match(/^\s*args\s*=\s*\[([^\]]*)\]/m);
+    if (argsMatch) {
+      args = argsMatch[1]
+        .split(",")
+        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+        .filter((s) => s.length > 0);
+    }
+
+    return { command, args };
+  }
+
+  private updateTomlMcpServer(
+    content: string,
+    name: string,
+    command: string,
+    args: string[]
+  ): string {
+    const formattedArgs = `[${args.map((a) => `"${a.replace(/"/g, '\\"')}"`).join(", ")}]`;
+    const sectionRegex = new RegExp(
+      `(\\[(?:mcp_servers|mcpServers)\\.${name}\\][\\s\\S]*?)(?=\\n\\[|\\r?\\n\\[|$)`
+    );
+
+    const block = `[mcp_servers.${name}]\ncommand = "${command}"\nargs = ${formattedArgs}\n`;
+
+    if (sectionRegex.test(content)) {
+      return content.replace(sectionRegex, block.trimEnd());
+    }
+
+    const trimmed = content.trim();
+    return trimmed ? `${trimmed}\n\n${block}` : block;
   }
 }

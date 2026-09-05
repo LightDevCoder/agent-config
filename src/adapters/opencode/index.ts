@@ -58,11 +58,13 @@ export class OpenCodeAdapter implements HostAdapter {
 
     if (workspaceRoot) {
       const candidates = [
-        path.join(workspaceRoot, "opencode.json"),
-        path.join(workspaceRoot, "opencode.jsonc"),
-        path.join(workspaceRoot, ".opencode"),
-        path.join(workspaceRoot, ".opencode", "opencode.json"),
         path.join(workspaceRoot, ".opencode", "opencode.jsonc"),
+        path.join(workspaceRoot, ".opencode", "opencode.json"),
+        path.join(workspaceRoot, ".opencode.jsonc"),
+        path.join(workspaceRoot, ".opencode.json"),
+        path.join(workspaceRoot, "opencode.jsonc"),
+        path.join(workspaceRoot, "opencode.json"),
+        path.join(workspaceRoot, ".opencode"),
       ];
       if (candidates.some((p) => fs.existsSync(p))) {
         return true;
@@ -463,56 +465,80 @@ export class OpenCodeAdapter implements HostAdapter {
 
     // Check project config if requested or workspaceRoot available
     if (scope !== "global" && workspaceRoot) {
-      const projectTarget = this.determineTargetConfigPath(workspace, "project");
-      if (fs.existsSync(projectTarget)) {
-        try {
-          const content = fs.readFileSync(projectTarget, "utf-8");
-          const parsed = this.parseJsonc(content);
-          const serverConfig =
-            parsed.mcp?.servers?.["agent-config"] ||
-            parsed.mcp?.["agent-config"];
-          if (serverConfig) {
-            return {
-              registered: true,
-              transport: "stdio",
-              scope: "project",
-              locator: projectTarget,
-              command: serverConfig.command,
-              args: serverConfig.args,
-              target_file: projectTarget,
-              details: serverConfig,
-            };
+      const projectCandidates = [
+        path.join(workspace, ".opencode", "opencode.jsonc"),
+        path.join(workspace, ".opencode", "opencode.json"),
+        path.join(workspace, ".opencode.jsonc"),
+        path.join(workspace, ".opencode.json"),
+        path.join(workspace, "opencode.jsonc"),
+        path.join(workspace, "opencode.json"),
+      ];
+
+      for (const projectTarget of projectCandidates) {
+        if (fs.existsSync(projectTarget)) {
+          try {
+            const content = fs.readFileSync(projectTarget, "utf-8");
+            const parsed = this.parseJsonc(content);
+            const serverConfig =
+              parsed.mcp?.servers?.["agent-config"] ||
+              parsed.mcp?.["agent-config"];
+            if (serverConfig) {
+              return {
+                registered: true,
+                transport: "stdio",
+                scope: "project",
+                locator: projectTarget,
+                command: serverConfig.command,
+                args: serverConfig.args,
+                target_file: projectTarget,
+                details: serverConfig,
+              };
+            }
+          } catch {
+            // Skip parse error
           }
-        } catch {
-          // Skip parse error
         }
       }
     }
 
     // Check global config
     if (scope !== "project") {
-      const globalTarget = this.determineTargetConfigPath(workspace, "global");
-      if (fs.existsSync(globalTarget)) {
-        try {
-          const content = fs.readFileSync(globalTarget, "utf-8");
-          const parsed = this.parseJsonc(content);
-          const serverConfig =
-            parsed.mcp?.servers?.["agent-config"] ||
-            parsed.mcp?.["agent-config"];
-          if (serverConfig) {
-            return {
-              registered: true,
-              transport: "stdio",
-              scope: "global",
-              locator: globalTarget,
-              command: serverConfig.command,
-              args: serverConfig.args,
-              target_file: globalTarget,
-              details: serverConfig,
-            };
+      const globalCandidates: string[] = [];
+      const globalConfigPath = this.getGlobalConfigPath();
+      if (globalConfigPath) globalCandidates.push(globalConfigPath);
+      const configDir =
+        process.env.OPENCODE_CONFIG_DIR ||
+        (process.env.XDG_CONFIG_HOME
+          ? path.join(process.env.XDG_CONFIG_HOME, "opencode")
+          : path.join(os.homedir(), ".config", "opencode"));
+      globalCandidates.push(
+        path.join(configDir, "opencode.jsonc"),
+        path.join(configDir, "opencode.json")
+      );
+
+      for (const globalTarget of globalCandidates) {
+        if (fs.existsSync(globalTarget)) {
+          try {
+            const content = fs.readFileSync(globalTarget, "utf-8");
+            const parsed = this.parseJsonc(content);
+            const serverConfig =
+              parsed.mcp?.servers?.["agent-config"] ||
+              parsed.mcp?.["agent-config"];
+            if (serverConfig) {
+              return {
+                registered: true,
+                transport: "stdio",
+                scope: "global",
+                locator: globalTarget,
+                command: serverConfig.command,
+                args: serverConfig.args,
+                target_file: globalTarget,
+                details: serverConfig,
+              };
+            }
+          } catch {
+            // Skip parse error
           }
-        } catch {
-          // Skip parse error
         }
       }
     }
@@ -1099,15 +1125,22 @@ export class OpenCodeAdapter implements HostAdapter {
     if (globalPath) paths.push(globalPath);
 
     if (workspaceRoot) {
-      const dotJsonc = path.join(workspaceRoot, ".opencode", "opencode.jsonc");
-      if (fs.existsSync(dotJsonc)) paths.push(dotJsonc);
-      const dotJson = path.join(workspaceRoot, ".opencode", "opencode.json");
-      if (fs.existsSync(dotJson)) paths.push(dotJson);
-
+      // Check in order of ascending precedence:
+      // opencode.json -> .opencode.json -> .opencode/opencode.json
       const localJsonc = path.join(workspaceRoot, "opencode.jsonc");
       if (fs.existsSync(localJsonc)) paths.push(localJsonc);
       const localJson = path.join(workspaceRoot, "opencode.json");
       if (fs.existsSync(localJson)) paths.push(localJson);
+
+      const dotFileJsonc = path.join(workspaceRoot, ".opencode.jsonc");
+      if (fs.existsSync(dotFileJsonc)) paths.push(dotFileJsonc);
+      const dotFileJson = path.join(workspaceRoot, ".opencode.json");
+      if (fs.existsSync(dotFileJson)) paths.push(dotFileJson);
+
+      const dotJsonc = path.join(workspaceRoot, ".opencode", "opencode.jsonc");
+      if (fs.existsSync(dotJsonc)) paths.push(dotJsonc);
+      const dotJson = path.join(workspaceRoot, ".opencode", "opencode.json");
+      if (fs.existsSync(dotJson)) paths.push(dotJson);
     }
 
     return paths;
@@ -1115,17 +1148,17 @@ export class OpenCodeAdapter implements HostAdapter {
 
   private resolveConfigFilePath(workspaceRoot?: string): string | null {
     if (workspaceRoot) {
-      const localJson = path.join(workspaceRoot, "opencode.json");
-      if (fs.existsSync(localJson)) return localJson;
-
-      const localJsonc = path.join(workspaceRoot, "opencode.jsonc");
-      if (fs.existsSync(localJsonc)) return localJsonc;
-
-      const dotJson = path.join(workspaceRoot, ".opencode", "opencode.json");
-      if (fs.existsSync(dotJson)) return dotJson;
-
-      const dotJsonc = path.join(workspaceRoot, ".opencode", "opencode.jsonc");
-      if (fs.existsSync(dotJsonc)) return dotJsonc;
+      const candidates = [
+        path.join(workspaceRoot, ".opencode", "opencode.jsonc"),
+        path.join(workspaceRoot, ".opencode", "opencode.json"),
+        path.join(workspaceRoot, ".opencode.jsonc"),
+        path.join(workspaceRoot, ".opencode.json"),
+        path.join(workspaceRoot, "opencode.jsonc"),
+        path.join(workspaceRoot, "opencode.json"),
+      ];
+      for (const c of candidates) {
+        if (fs.existsSync(c)) return c;
+      }
     }
 
     return this.getGlobalConfigPath();
@@ -1140,7 +1173,9 @@ export class OpenCodeAdapter implements HostAdapter {
       if (globalPath) return globalPath;
       const configDir =
         process.env.OPENCODE_CONFIG_DIR ||
-        path.join(os.homedir(), ".config", "opencode");
+        (process.env.XDG_CONFIG_HOME
+          ? path.join(process.env.XDG_CONFIG_HOME, "opencode")
+          : path.join(os.homedir(), ".config", "opencode"));
       return path.join(configDir, "opencode.json");
     }
 
@@ -1153,8 +1188,18 @@ export class OpenCodeAdapter implements HostAdapter {
     const dotJson = path.join(workspaceRoot, ".opencode", "opencode.json");
     if (fs.existsSync(dotJson)) return dotJson;
 
+    const dotFileJsonc = path.join(workspaceRoot, ".opencode.jsonc");
+    if (fs.existsSync(dotFileJsonc)) return dotFileJsonc;
+
+    const dotFileJson = path.join(workspaceRoot, ".opencode.json");
+    if (fs.existsSync(dotFileJson)) return dotFileJson;
+
     const localJson = path.join(workspaceRoot, "opencode.json");
     if (fs.existsSync(localJson)) return localJson;
+
+    if (fs.existsSync(path.join(workspaceRoot, ".opencode"))) {
+      return path.join(workspaceRoot, ".opencode", "opencode.json");
+    }
 
     return path.join(workspaceRoot, "opencode.json");
   }
@@ -1162,7 +1207,9 @@ export class OpenCodeAdapter implements HostAdapter {
   private getGlobalConfigPath(): string | null {
     const configDir =
       process.env.OPENCODE_CONFIG_DIR ||
-      path.join(os.homedir(), ".config", "opencode");
+      (process.env.XDG_CONFIG_HOME
+        ? path.join(process.env.XDG_CONFIG_HOME, "opencode")
+        : path.join(os.homedir(), ".config", "opencode"));
 
     const jsoncPath = path.join(configDir, "opencode.jsonc");
     if (fs.existsSync(jsoncPath)) return jsoncPath;

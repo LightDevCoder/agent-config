@@ -429,10 +429,29 @@ describe("DeepSeek Harness (DSH) Native Adapter Tests (§39, §40, §41, §42, �
       expect(await adapter.identifyHost(workspaceDir)).toBe(true);
 
       const targetProject = adapter.determineTargetConfigPath(workspaceDir, "project");
-      expect(targetProject).toBe(path.join(workspaceDir, "dsh.config.json"));
+      expect(targetProject).toBe(path.join(workspaceDir, "cordis.patch.yml"));
 
       const targetUser = adapter.determineTargetConfigPath(workspaceDir, "user");
       expect(targetUser).toContain("cordis.patch.yml");
+    });
+
+    it("registers companion MCP using canonical @deepseek-ai/dsh-mcp-client plugin in cordis.patch.yml", async () => {
+      const adapter = new DshAdapter();
+      process.env.DSH_VERSION = "1.0.0";
+
+      // Global scope preview targets cordis.patch.yml under DSH_HOME
+      const preview = await adapter.previewCompanionRegistration(workspaceDir, "global");
+      expect(preview.supported).toBe(true);
+      expect(preview.target_file).toContain("cordis.patch.yml");
+      expect(preview.diff).toContain("@deepseek-ai/dsh-mcp-client");
+      expect(preview.diff).toContain("agent-config");
+
+      const apply = await adapter.applyCompanionRegistration(preview.preview_hash!, workspaceDir, preview);
+      expect(apply.success).toBe(true);
+
+      const status = await adapter.inspectCompanionRegistration(workspaceDir, "global");
+      expect(status.registered).toBe(true);
+      expect(status.details?.mcp_plugin).toBe("@deepseek-ai/dsh-mcp-client");
     });
   });
 });

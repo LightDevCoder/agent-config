@@ -54,7 +54,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
         setupWorkspace: async (dir) => {
           await fsp.mkdir(path.join(dir, ".codex"), { recursive: true });
         },
-        expectedTargetSubpath: path.join(".codex", "mcp.json"),
+        expectedTargetSubpath: path.join(".codex", "config.toml"),
       },
       {
         id: "opencode",
@@ -70,7 +70,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
         setupWorkspace: async (dir) => {
           await fsp.mkdir(path.join(dir, ".claude"), { recursive: true });
         },
-        expectedTargetSubpath: path.join(".claude", "mcp.json"),
+        expectedTargetSubpath: ".mcp.json",
       },
       {
         id: "gemini-cli",
@@ -96,7 +96,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
           // Version safety marker per SPEC §42
           await fsp.writeFile(path.join(dir, ".dsh", "version"), "1.0.0\n", "utf-8");
         },
-        expectedTargetSubpath: "dsh.config.json",
+        expectedTargetSubpath: "cordis.patch.yml",
       },
       {
         id: "grok-build",
@@ -393,7 +393,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       expect(result.apply).toBeUndefined();
 
       // Verify no target file was written
-      const targetFile = path.join(workspaceDir, ".codex", "mcp.json");
+      const targetFile = path.join(workspaceDir, ".codex", "config.toml");
       expect(fs.existsSync(targetFile)).toBe(false);
     });
 
@@ -412,7 +412,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
       expect(result.validation?.valid).toBe(true);
 
       // Verify target file exists and is registered
-      const targetFile = path.join(workspaceDir, ".codex", "mcp.json");
+      const targetFile = path.join(workspaceDir, ".codex", "config.toml");
       expect(fs.existsSync(targetFile)).toBe(true);
 
       // Re-running lifecycle returns completed immediately

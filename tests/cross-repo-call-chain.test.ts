@@ -766,15 +766,8 @@ describe("Gate 2: Cross-Repo Call Chain Integration (agent-config <-> implement)
     it("integrates strict health check into validateCompanionSetup lifecycle", async () => {
       await fsp.mkdir(path.join(workspaceDir, ".codex"), { recursive: true });
       await fsp.writeFile(
-        path.join(workspaceDir, ".codex", "mcp.json"),
-        JSON.stringify({
-          mcpServers: {
-            "agent-config": {
-              command: "agent-config",
-              args: ["serve"],
-            },
-          },
-        }),
+        path.join(workspaceDir, ".codex", "config.toml"),
+        '[mcp_servers.agent-config]\ncommand = "agent-config"\nargs = ["serve"]\n',
         "utf-8"
       );
 

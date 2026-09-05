@@ -384,4 +384,52 @@ describe("Claude Code Native Adapter Tests (§27, §28)", () => {
       expect(driftValidation.errors?.some((e) => e.includes("model mismatch"))).toBe(true);
     });
   });
+
+  describe("EffortLevel & Strict MCP Surfaces (§27, Phase 3)", () => {
+    it("inspects effortLevel from configuration and resolves reasoning with native field effortLevel", async () => {
+      await fsp.mkdir(path.join(workspaceDir, ".claude"), { recursive: true });
+      await fsp.writeFile(
+        path.join(workspaceDir, ".claude", "settings.json"),
+        JSON.stringify({
+          model: "claude-3-7-sonnet-20250219",
+          effortLevel: "high",
+        }),
+        "utf-8"
+      );
+
+      const adapter = new ClaudeCodeAdapter();
+      const options = await adapter.inspectReasoningOptions(workspaceDir);
+      expect(options.native_field).toBe("effortLevel");
+      expect(options.supported_values).toContain("high");
+
+      const resolved = await adapter.resolveReasoningPolicy("highest-supported", undefined, workspaceDir);
+      expect(resolved).toEqual({
+        host_field: "effortLevel",
+        host_value: "high",
+      });
+    });
+
+    it("inspects --effort from CLAUDE_ARGS", async () => {
+      process.env.CLAUDE_ARGS = "--effort max";
+      const adapter = new ClaudeCodeAdapter();
+      const options = await adapter.inspectReasoningOptions(workspaceDir);
+      expect(options.native_field).toBe("effortLevel");
+      expect(options.supported_values).toContain("max");
+      delete process.env.CLAUDE_ARGS;
+    });
+
+    it("strictly isolates project MCP to .mcp.json and global MCP to ~/.claude.json", async () => {
+      const adapter = new ClaudeCodeAdapter();
+
+      // Project preview targets strictly <workspace>/.mcp.json
+      const projPreview = await adapter.previewCompanionRegistration(workspaceDir, "project");
+      expect(projPreview.target_file).toBe(path.join(workspaceDir, ".mcp.json"));
+      expect(projPreview.mutation_targets).toEqual([path.join(workspaceDir, ".mcp.json")]);
+
+      // Global preview targets strictly ~/.claude.json
+      const globalPreview = await adapter.previewCompanionRegistration(workspaceDir, "global");
+      expect(globalPreview.target_file).toBe(path.join(userHomeDir, ".claude.json"));
+      expect(globalPreview.mutation_targets).toEqual([path.join(userHomeDir, ".claude.json")]);
+    });
+  });
 });

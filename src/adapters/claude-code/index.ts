@@ -432,37 +432,82 @@ export class ClaudeCodeAdapter implements HostAdapter {
 
   async inspectEffortValues(workspaceRoot?: string): Promise<string[]> {
     const config = this.readEffectiveConfig(workspaceRoot);
+    const values = new Set<string>();
+
     if (config) {
+      if (typeof config.effortLevel === "string" && config.effortLevel.trim()) {
+        values.add(config.effortLevel.trim());
+      }
+      if (typeof config.effort === "string" && config.effort.trim()) {
+        values.add(config.effort.trim());
+      }
+      if (config.settings && typeof config.settings === "object") {
+        if (typeof config.settings.effortLevel === "string" && config.settings.effortLevel.trim()) {
+          values.add(config.settings.effortLevel.trim());
+        }
+        if (typeof config.settings.effort === "string" && config.settings.effort.trim()) {
+          values.add(config.settings.effort.trim());
+        }
+      }
       if (Array.isArray(config.supported_effort_values)) {
-        return config.supported_effort_values.map(String);
+        config.supported_effort_values.forEach((v: any) => values.add(String(v)));
       }
       if (typeof config.reasoning_effort === "string") {
-        return [config.reasoning_effort];
+        values.add(config.reasoning_effort.trim());
       }
       if (config.thinking && typeof config.thinking === "object") {
         if (Array.isArray(config.thinking.supported_values)) {
-          return config.thinking.supported_values.map(String);
-        }
-        if (config.thinking.type === "enabled" || config.thinking.budget_tokens) {
-          return ["enabled", "disabled"];
+          config.thinking.supported_values.forEach((v: any) => values.add(String(v)));
+        } else if (config.thinking.type === "enabled" || config.thinking.budget_tokens) {
+          values.add("enabled");
+          values.add("disabled");
         }
       }
     }
 
+    if (process.env.CLAUDE_EFFORT_LEVEL) {
+      values.add(process.env.CLAUDE_EFFORT_LEVEL.trim());
+    }
+    if (process.env.CLAUDE_EFFORT) {
+      values.add(process.env.CLAUDE_EFFORT.trim());
+    }
     if (process.env.CLAUDE_REASONING_EFFORT) {
-      return [process.env.CLAUDE_REASONING_EFFORT];
+      values.add(process.env.CLAUDE_REASONING_EFFORT.trim());
     }
     if (process.env.CLAUDE_THINKING) {
-      return ["enabled", "disabled"];
+      values.add("enabled");
+      values.add("disabled");
     }
 
-    return [];
+    if (process.env.CLAUDE_ARGS) {
+      const match = process.env.CLAUDE_ARGS.match(/--effort[=\s]+([^\s]+)/);
+      if (match) {
+        values.add(match[1].trim());
+      }
+    }
+
+    return Array.from(values);
   }
 
   async inspectReasoningOptions(workspaceRoot?: string): Promise<HostReasoningOptions> {
     const effortValues = await this.inspectEffortValues(workspaceRoot);
+    const config = this.readEffectiveConfig(workspaceRoot);
+
+    let nativeField = "thinking";
+    if (
+      config?.effortLevel ||
+      config?.effort ||
+      config?.settings?.effortLevel ||
+      config?.settings?.effort ||
+      process.env.CLAUDE_EFFORT_LEVEL ||
+      process.env.CLAUDE_EFFORT ||
+      process.env.CLAUDE_ARGS?.includes("--effort")
+    ) {
+      nativeField = "effortLevel";
+    }
+
     return {
-      native_field: "thinking",
+      native_field: nativeField,
       supported_values: effortValues,
       default_value: effortValues.length > 0 ? effortValues[0] : undefined,
     };
@@ -489,15 +534,9 @@ export class ClaudeCodeAdapter implements HostAdapter {
   ): Promise<CompanionRegistrationStatus> {
     const workspace = workspaceRoot || process.cwd();
 
-    // Check project-level MCP files
-    const projectMcpFiles = [
-      path.join(workspace, ".mcp.json"),
-      path.join(workspace, ".claude", "mcp.json"),
-      path.join(workspace, ".claude.json"),
-      path.join(workspace, ".claude", "settings.json"),
-    ];
-
-    for (const targetFile of projectMcpFiles) {
+    // Check project-level MCP surface: strictly .mcp.json in workspace root
+    if (scope !== "global" && scope !== "user" && workspaceRoot) {
+      const targetFile = path.join(workspace, ".mcp.json");
       if (fs.existsSync(targetFile)) {
         try {
           const content = fs.readFileSync(targetFile, "utf-8");
@@ -521,14 +560,9 @@ export class ClaudeCodeAdapter implements HostAdapter {
       }
     }
 
-    // Check user-level MCP files
-    const userMcpFiles = [
-      path.join(this.getGlobalClaudeDir(), "mcp.json"),
-      path.join(os.homedir(), ".claude.json"),
-      path.join(this.getGlobalClaudeDir(), "settings.json"),
-    ];
-
-    for (const targetFile of userMcpFiles) {
+    // Check user/global MCP surface: strictly ~/.claude.json
+    if (scope !== "project") {
+      const targetFile = path.join(os.homedir(), ".claude.json");
       if (fs.existsSync(targetFile)) {
         try {
           const content = fs.readFileSync(targetFile, "utf-8");
@@ -552,7 +586,7 @@ export class ClaudeCodeAdapter implements HostAdapter {
       }
     }
 
-    const defaultTarget = this.determineMcpRegistrationPath(workspace);
+    const defaultTarget = this.determineMcpRegistrationPath(workspace, scope);
     const resolvedScope: "project" | "global" =
       scope === "global" || scope === "user" || (!scope && !workspaceRoot)
         ? "global"
@@ -948,7 +982,7 @@ export class ClaudeCodeAdapter implements HostAdapter {
     }
 
     return {
-      host_field: "thinking",
+      host_field: options.native_field,
       host_value: resolvedValue,
     };
   }
@@ -972,19 +1006,9 @@ export class ClaudeCodeAdapter implements HostAdapter {
 
   determineMcpRegistrationPath(workspace: string, scope?: "project" | "global" | "user"): string {
     if (scope === "global" || scope === "user" || !workspace) {
-      const userDotMcp = path.join(os.homedir(), ".claude.json");
-      const globalMcp = path.join(this.getGlobalClaudeDir(), "mcp.json");
-      if (fs.existsSync(userDotMcp)) return userDotMcp;
-      if (fs.existsSync(globalMcp)) return globalMcp;
-      return path.join(this.getGlobalClaudeDir(), "mcp.json");
+      return path.join(os.homedir(), ".claude.json");
     }
-    const dotMcp = path.join(workspace, ".mcp.json");
-    const claudeMcp = path.join(workspace, ".claude", "mcp.json");
-    const claudeJson = path.join(workspace, ".claude.json");
-    if (fs.existsSync(dotMcp)) return dotMcp;
-    if (fs.existsSync(claudeMcp)) return claudeMcp;
-    if (fs.existsSync(claudeJson)) return claudeJson;
-    return claudeMcp;
+    return path.join(workspace, ".mcp.json");
   }
 
   readEffectiveConfig(workspaceRoot?: string): Record<string, any> | null {

@@ -873,16 +873,32 @@ export class DshAdapter implements HostAdapter {
   /**
    * Resolves target configuration path for DSH according to scope.
    */
-  determineTargetConfigPath(workspaceRoot: string, scope?: "project" | "global" | "user"): string {
+  determineTargetConfigPath(workspaceRoot?: string, scope?: "project" | "global" | "user"): string {
+    const dshHome = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
+    const profile = process.env.DSH_PROFILE || process.env.DSH_PRESET;
+
     if (scope === "global" || scope === "user" || !workspaceRoot) {
-      const dshHome = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
-      return path.join(dshHome, "profiles", "web", "cordis.patch.yml");
+      if (profile) {
+        return path.join(dshHome, "profiles", profile, "cordis.patch.yml");
+      }
+      const homePatch = path.join(dshHome, "cordis.patch.yml");
+      if (fs.existsSync(homePatch)) return homePatch;
+      const defaultProfilePatch = path.join(dshHome, "profiles", "web", "cordis.patch.yml");
+      if (fs.existsSync(defaultProfilePatch)) return defaultProfilePatch;
+      return homePatch;
     }
+
+    // Project layer: explicit --patch overlay
+    const cordisPatchYml = path.join(workspaceRoot, "cordis.patch.yml");
+    if (fs.existsSync(cordisPatchYml)) return cordisPatchYml;
+    const cordisPatchYaml = path.join(workspaceRoot, "cordis.patch.yaml");
+    if (fs.existsSync(cordisPatchYaml)) return cordisPatchYaml;
     const dshDirConfig = path.join(workspaceRoot, ".dsh", "config.json");
-    if (fs.existsSync(dshDirConfig)) {
-      return dshDirConfig;
-    }
-    return path.join(workspaceRoot, "dsh.config.json");
+    if (fs.existsSync(dshDirConfig)) return dshDirConfig;
+    const dshConfigJson = path.join(workspaceRoot, "dsh.config.json");
+    if (fs.existsSync(dshConfigJson)) return dshConfigJson;
+
+    return cordisPatchYml;
   }
 
   /**
@@ -903,6 +919,7 @@ export class DshAdapter implements HostAdapter {
     const activePlugins = await this.inspectActivePlugins(workspaceRoot);
     const mcpPluginActive = activePlugins.some(
       (p) =>
+        p === "@deepseek-ai/dsh-mcp-client" ||
         p === "@dsh/plugin-mcp" ||
         p === "mcp" ||
         p === "mcp-client" ||
@@ -914,46 +931,71 @@ export class DshAdapter implements HostAdapter {
     let serverEntry: { command: string; args?: string[] } | undefined;
     let detectedPluginKey: string | undefined;
 
+    const dshHome = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
+    const profile = process.env.DSH_PROFILE || process.env.DSH_PRESET;
+
     const candidateFiles = [
       targetFile,
-      path.join(workspace, "dsh.config.json"),
-      path.join(workspace, ".dsh", "config.json"),
+      path.join(dshHome, "cordis.patch.yml"),
+      path.join(dshHome, "cordis.patch.yaml"),
+      path.join(dshHome, "profiles", profile || "web", "cordis.patch.yml"),
+      path.join(dshHome, "profiles", "default", "cordis.patch.yml"),
     ];
+
+    if (workspaceRoot) {
+      candidateFiles.push(
+        path.join(workspace, "cordis.patch.yml"),
+        path.join(workspace, "cordis.patch.yaml"),
+        path.join(workspace, "dsh.config.json"),
+        path.join(workspace, ".dsh", "config.json")
+      );
+    }
 
     for (const cf of candidateFiles) {
       if (fs.existsSync(cf)) {
         try {
           const content = fs.readFileSync(cf, "utf-8");
-          const parsed = jsonc.parse(content);
-          if (parsed && parsed.plugins && typeof parsed.plugins === "object") {
-            for (const [key, val] of Object.entries<any>(parsed.plugins)) {
-              if (
-                key === "@dsh/plugin-mcp" ||
-                key === "mcp" ||
-                key === "mcp-client" ||
-                key.toLowerCase().includes("mcp")
-              ) {
-                mcpPluginInConfig = true;
-                detectedPluginKey = key;
-                if (val && typeof val === "object") {
-                  const servers = val.mcpServers || val.servers;
-                  if (servers && servers["agent-config"]) {
-                    serverEntry = servers["agent-config"];
-                    break;
+          if (this.isYamlPath(cf)) {
+            const yamlServer = this.extractYamlMcpServer(content);
+            if (yamlServer) {
+              mcpPluginInConfig = true;
+              detectedPluginKey = yamlServer.pluginKey;
+              serverEntry = { command: yamlServer.command, args: yamlServer.args };
+              break;
+            }
+          } else {
+            const parsed = jsonc.parse(content);
+            if (parsed && parsed.plugins && typeof parsed.plugins === "object") {
+              for (const [key, val] of Object.entries<any>(parsed.plugins)) {
+                if (
+                  key === "@deepseek-ai/dsh-mcp-client" ||
+                  key === "@dsh/plugin-mcp" ||
+                  key === "mcp" ||
+                  key === "mcp-client" ||
+                  key.toLowerCase().includes("mcp")
+                ) {
+                  mcpPluginInConfig = true;
+                  detectedPluginKey = key;
+                  if (val && typeof val === "object") {
+                    const servers = val.mcpServers || val.servers;
+                    if (servers && servers["agent-config"]) {
+                      serverEntry = servers["agent-config"];
+                      break;
+                    }
                   }
                 }
               }
             }
+            if (
+              !serverEntry &&
+              parsed &&
+              parsed.mcpServers &&
+              parsed.mcpServers["agent-config"]
+            ) {
+              serverEntry = parsed.mcpServers["agent-config"];
+            }
+            if (serverEntry) break;
           }
-          if (
-            !serverEntry &&
-            parsed &&
-            parsed.mcpServers &&
-            parsed.mcpServers["agent-config"]
-          ) {
-            serverEntry = parsed.mcpServers["agent-config"];
-          }
-          if (serverEntry) break;
         } catch {
           // Skip
         }
@@ -973,7 +1015,7 @@ export class DshAdapter implements HostAdapter {
         args: serverEntry.args,
         target_file: targetFile,
         details: {
-          mcp_plugin: detectedPluginKey || "@dsh/plugin-mcp",
+          mcp_plugin: detectedPluginKey || "@deepseek-ai/dsh-mcp-client",
           mcp_plugin_active: mcpPluginActive,
           config: serverEntry,
         },
@@ -1022,53 +1064,64 @@ export class DshAdapter implements HostAdapter {
     }
 
     let existingContent: string | null = null;
-    let currentText =
-      '{\n  "version": "1.0.0",\n  "pluginApiVersion": "1.0.0",\n  "plugins": {}\n}\n';
+    let newContent: string;
+    let baselineHash: string | null = null;
 
-    if (fs.existsSync(targetFile)) {
-      existingContent = await fsp.readFile(targetFile, "utf-8");
-      const parseErrors: jsonc.ParseError[] = [];
-      jsonc.parse(existingContent, parseErrors, { allowTrailingComma: true });
-      if (parseErrors.length > 0) {
-        return {
-          supported: false,
-          adapter_id: this.id,
-          host_id: this.id,
-          scope: resolvedScope,
-          target_file: targetFile,
-          mutation_targets: [],
-          error: `DSH configuration file at '${targetFile}' contains syntax errors. Rejecting companion registration to prevent data loss.`,
-        };
+    if (this.isYamlPath(targetFile)) {
+      if (fs.existsSync(targetFile)) {
+        existingContent = await fsp.readFile(targetFile, "utf-8");
+        baselineHash = crypto.createHash("sha256").update(existingContent).digest("hex");
       }
-      currentText = existingContent;
+      newContent = this.updateCordisPatchMcpServer(existingContent || "");
+    } else {
+      let currentText =
+        '{\n  "version": "1.0.0",\n  "pluginApiVersion": "1.0.0",\n  "plugins": {}\n}\n';
+
+      if (fs.existsSync(targetFile)) {
+        existingContent = await fsp.readFile(targetFile, "utf-8");
+        const parseErrors: jsonc.ParseError[] = [];
+        jsonc.parse(existingContent, parseErrors, { allowTrailingComma: true });
+        if (parseErrors.length > 0) {
+          return {
+            supported: false,
+            adapter_id: this.id,
+            host_id: this.id,
+            scope: resolvedScope,
+            target_file: targetFile,
+            mutation_targets: [],
+            error: `DSH configuration file at '${targetFile}' contains syntax errors. Rejecting companion registration to prevent data loss.`,
+          };
+        }
+        currentText = existingContent;
+        baselineHash = crypto.createHash("sha256").update(existingContent).digest("hex");
+      }
+
+      let mcpKey = "@deepseek-ai/dsh-mcp-client";
+      try {
+        const parsed = jsonc.parse(currentText);
+        if (parsed && parsed.plugins && typeof parsed.plugins === "object") {
+          if ("@deepseek-ai/dsh-mcp-client" in parsed.plugins) mcpKey = "@deepseek-ai/dsh-mcp-client";
+          else if ("mcp" in parsed.plugins) mcpKey = "mcp";
+          else if ("mcp-client" in parsed.plugins) mcpKey = "mcp-client";
+          else if ("@dsh/plugin-mcp" in parsed.plugins) mcpKey = "@dsh/plugin-mcp";
+        }
+      } catch {
+        // Keep default
+      }
+
+      const formatting = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
+      const edits = jsonc.modify(
+        currentText,
+        ["plugins", mcpKey, "mcpServers", "agent-config"],
+        { command: "agent-config", args: ["serve"] },
+        formatting
+      );
+      newContent = jsonc.applyEdits(currentText, edits);
     }
 
-    let mcpKey = "@dsh/plugin-mcp";
-    try {
-      const parsed = jsonc.parse(currentText);
-      if (parsed && parsed.plugins && typeof parsed.plugins === "object") {
-        if ("mcp" in parsed.plugins) mcpKey = "mcp";
-        else if ("mcp-client" in parsed.plugins) mcpKey = "mcp-client";
-        else if ("@dsh/plugin-mcp" in parsed.plugins) mcpKey = "@dsh/plugin-mcp";
-      }
-    } catch {
-      // Keep default
-    }
-
-    const formatting = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
-    const edits = jsonc.modify(
-      currentText,
-      ["plugins", mcpKey, "mcpServers", "agent-config"],
-      { command: "agent-config", args: ["serve"] },
-      formatting
-    );
-    const newContent = jsonc.applyEdits(currentText, edits);
     const diff = createUnifiedDiff(targetFile, existingContent, newContent);
     const previewId = `preview-companion-dsh-${Date.now()}`;
     const previewHash = crypto.createHash("sha256").update(newContent).digest("hex");
-    const baselineHash = existingContent
-      ? crypto.createHash("sha256").update(existingContent).digest("hex")
-      : null;
 
     return {
       supported: true,
@@ -1190,77 +1243,109 @@ export class DshAdapter implements HostAdapter {
       extractReasoningPolicy(plan.controller);
 
     let existingContent: string | null = null;
-    let currentText =
-      '{\n  "version": "1.0.0",\n  "pluginApiVersion": "1.0.0",\n  "plugins": {}\n}\n';
+    let currentText: string;
 
-    if (fs.existsSync(targetFile)) {
-      existingContent = await fsp.readFile(targetFile, "utf-8");
-      const parseErrors: jsonc.ParseError[] = [];
-      jsonc.parse(existingContent, parseErrors, { allowTrailingComma: true });
-      if (parseErrors.length > 0) {
-        throw new Error(
-          `DSH configuration file at '${targetFile}' contains syntax errors. Rejecting mutation to prevent configuration loss.`
-        );
+    if (this.isYamlPath(targetFile)) {
+      if (fs.existsSync(targetFile)) {
+        existingContent = await fsp.readFile(targetFile, "utf-8");
       }
-      currentText = existingContent;
-    }
+      let lines = existingContent ? existingContent.split(/\r?\n/) : [];
+      let updatedModel = false;
+      let updatedEffort = false;
+      const resultLines: string[] = [];
 
-    const formatting = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
-
-    let llmKey = "@dsh/plugin-llm";
-    try {
-      const parsed = jsonc.parse(currentText);
-      if (parsed && parsed.plugins && typeof parsed.plugins === "object") {
-        if ("@dsh/plugin-deepseek" in parsed.plugins) llmKey = "@dsh/plugin-deepseek";
-        else if ("deepseek" in parsed.plugins) llmKey = "deepseek";
-        else if ("llm" in parsed.plugins) llmKey = "llm";
+      for (const line of lines) {
+        if (/^\s*model:\s*/.test(line)) {
+          resultLines.push(`model: ${targetModel}`);
+          updatedModel = true;
+        } else if (/^\s*reasoning_effort:\s*/.test(line) && targetEffort) {
+          resultLines.push(`reasoning_effort: ${targetEffort}`);
+          updatedEffort = true;
+        } else {
+          resultLines.push(line);
+        }
       }
-    } catch {
-      // Keep default
-    }
 
-    // 1. Root model and LLM plugin model
-    let edits = jsonc.modify(currentText, ["model"], targetModel, formatting);
-    currentText = jsonc.applyEdits(currentText, edits);
+      if (!updatedModel) {
+        resultLines.unshift(`model: ${targetModel}`);
+      }
+      if (!updatedEffort && targetEffort) {
+        resultLines.splice(1, 0, `reasoning_effort: ${targetEffort}`);
+      }
+      currentText = resultLines.join("\n") + "\n";
+    } else {
+      currentText =
+        '{\n  "version": "1.0.0",\n  "pluginApiVersion": "1.0.0",\n  "plugins": {}\n}\n';
 
-    edits = jsonc.modify(
-      currentText,
-      ["plugins", llmKey, "model"],
-      targetModel,
-      formatting
-    );
-    currentText = jsonc.applyEdits(currentText, edits);
+      if (fs.existsSync(targetFile)) {
+        existingContent = await fsp.readFile(targetFile, "utf-8");
+        const parseErrors: jsonc.ParseError[] = [];
+        jsonc.parse(existingContent, parseErrors, { allowTrailingComma: true });
+        if (parseErrors.length > 0) {
+          throw new Error(
+            `DSH configuration file at '${targetFile}' contains syntax errors. Rejecting mutation to prevent configuration loss.`
+          );
+        }
+        currentText = existingContent;
+      }
 
-    // 2. Reasoning effort
-    if (targetEffort) {
-      edits = jsonc.modify(currentText, ["reasoning_effort"], targetEffort, formatting);
+      const formatting = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
+
+      let llmKey = "@dsh/plugin-llm";
+      try {
+        const parsed = jsonc.parse(currentText);
+        if (parsed && parsed.plugins && typeof parsed.plugins === "object") {
+          if ("@dsh/plugin-deepseek" in parsed.plugins) llmKey = "@dsh/plugin-deepseek";
+          else if ("deepseek" in parsed.plugins) llmKey = "deepseek";
+          else if ("llm" in parsed.plugins) llmKey = "llm";
+        }
+      } catch {
+        // Keep default
+      }
+
+      // 1. Root model and LLM plugin model
+      let edits = jsonc.modify(currentText, ["model"], targetModel, formatting);
       currentText = jsonc.applyEdits(currentText, edits);
+
       edits = jsonc.modify(
         currentText,
-        ["plugins", llmKey, "reasoning_effort"],
-        targetEffort,
+        ["plugins", llmKey, "model"],
+        targetModel,
         formatting
       );
       currentText = jsonc.applyEdits(currentText, edits);
-    }
 
-    // 3. Work items rendered into subagent profiles
-    if (plan.work_items && plan.work_items.length > 0) {
-      for (const item of plan.work_items) {
-        const profileVal: Record<string, any> = {
-          model: item.model,
-        };
-        const itemEffort = extractReasoningPolicy(item);
-        if (itemEffort) {
-          profileVal.reasoning_effort = itemEffort;
-        }
-        const profileEdits = jsonc.modify(
+      // 2. Reasoning effort
+      if (targetEffort) {
+        edits = jsonc.modify(currentText, ["reasoning_effort"], targetEffort, formatting);
+        currentText = jsonc.applyEdits(currentText, edits);
+        edits = jsonc.modify(
           currentText,
-          ["plugins", "@dsh/plugin-subagents", "profiles", item.ticket_id],
-          profileVal,
+          ["plugins", llmKey, "reasoning_effort"],
+          targetEffort,
           formatting
         );
-        currentText = jsonc.applyEdits(currentText, profileEdits);
+        currentText = jsonc.applyEdits(currentText, edits);
+      }
+
+      // 3. Work items rendered into subagent profiles
+      if (plan.work_items && plan.work_items.length > 0) {
+        for (const item of plan.work_items) {
+          const profileVal: Record<string, any> = {
+            model: item.model,
+          };
+          const itemEffort = extractReasoningPolicy(item);
+          if (itemEffort) {
+            profileVal.reasoning_effort = itemEffort;
+          }
+          const profileEdits = jsonc.modify(
+            currentText,
+            ["plugins", "@dsh/plugin-subagents", "profiles", item.ticket_id],
+            profileVal,
+            formatting
+          );
+          currentText = jsonc.applyEdits(currentText, profileEdits);
+        }
       }
     }
 
@@ -1366,40 +1451,49 @@ export class DshAdapter implements HostAdapter {
 
     try {
       const content = await fsp.readFile(targetFile, "utf-8");
-      const parsed = jsonc.parse(content);
-      if (!parsed) {
-        return {
-          valid: false,
-          workspace,
-          message: "Failed to parse DSH configuration file.",
-          errors: ["Configuration file could not be parsed."],
-        };
-      }
-
       const expectedModel =
         expected.execution?.model || expected.controller?.model;
+      const expectedEffort =
+        extractReasoningPolicy(expected.execution) ||
+        extractReasoningPolicy(expected.controller);
       const errors: string[] = [];
 
-      const actualModel =
-        parsed.model ||
-        parsed.plugins?.["@dsh/plugin-llm"]?.model ||
-        parsed.plugins?.["@dsh/plugin-deepseek"]?.model ||
-        parsed.plugins?.["deepseek"]?.model ||
-        parsed.plugins?.["llm"]?.model;
+      let actualModel: string | undefined;
+      let actualEffort: string | undefined;
+
+      if (this.isYamlPath(targetFile)) {
+        const modelMatch = content.match(/^\s*model:\s*["']?([^"'\r\n]+)["']?/m);
+        const effortMatch = content.match(/^\s*reasoning_effort:\s*["']?([^"'\r\n]+)["']?/m);
+        actualModel = modelMatch ? modelMatch[1].trim() : undefined;
+        actualEffort = effortMatch ? effortMatch[1].trim() : undefined;
+      } else {
+        const parsed = jsonc.parse(content);
+        if (!parsed) {
+          return {
+            valid: false,
+            workspace,
+            message: "Failed to parse DSH configuration file.",
+            errors: ["Configuration file could not be parsed."],
+          };
+        }
+
+        actualModel =
+          parsed.model ||
+          parsed.plugins?.["@dsh/plugin-llm"]?.model ||
+          parsed.plugins?.["@dsh/plugin-deepseek"]?.model ||
+          parsed.plugins?.["deepseek"]?.model ||
+          parsed.plugins?.["llm"]?.model;
+
+        actualEffort =
+          parsed.reasoning_effort ||
+          parsed.plugins?.["@dsh/plugin-llm"]?.reasoning_effort ||
+          parsed.plugins?.["@dsh/plugin-deepseek"]?.reasoning_effort ||
+          parsed.plugins?.["deepseek"]?.reasoning_effort;
+      }
 
       if (expectedModel && actualModel !== expectedModel) {
         errors.push(`Expected model '${expectedModel}', found '${actualModel}'`);
       }
-
-      const expectedEffort =
-        extractReasoningPolicy(expected.execution) ||
-        extractReasoningPolicy(expected.controller);
-
-      const actualEffort =
-        parsed.reasoning_effort ||
-        parsed.plugins?.["@dsh/plugin-llm"]?.reasoning_effort ||
-        parsed.plugins?.["@dsh/plugin-deepseek"]?.reasoning_effort ||
-        parsed.plugins?.["deepseek"]?.reasoning_effort;
 
       if (expectedEffort && actualEffort !== expectedEffort) {
         errors.push(
@@ -1429,6 +1523,79 @@ export class DshAdapter implements HostAdapter {
         errors: [err.message],
       };
     }
+  }
+
+  // --- Helpers for YAML / Cordis composition plane ---
+
+  private isYamlPath(filePath: string): boolean {
+    return filePath.endsWith(".yml") || filePath.endsWith(".yaml");
+  }
+
+  private extractYamlMcpServer(
+    content: string
+  ): { command: string; args?: string[]; pluginKey: string } | null {
+    const pluginMatch = content.match(
+      /["']?(@deepseek-ai\/dsh-mcp-client|@dsh\/plugin-mcp|mcp-client|mcp)["']?:\s*\r?\n([\s\S]*?)(?=\r?\n\s{0,2}[a-zA-Z0-9_"'@-]+:|$)/
+    );
+    if (!pluginMatch) {
+      const directMatch = content.match(
+        /mcpServers:\s*\r?\n([\s\S]*?)(?=\r?\n\s{0,2}[a-zA-Z0-9_"'@-]+:|$)/
+      );
+      if (directMatch && directMatch[1].includes("agent-config:")) {
+        const block = directMatch[1];
+        const cmdMatch = block.match(/command:\s*["']?([^"'\r\n]+)["']?/);
+        if (cmdMatch) {
+          return { command: cmdMatch[1].trim(), args: ["serve"], pluginKey: "@deepseek-ai/dsh-mcp-client" };
+        }
+      }
+      return null;
+    }
+
+    const pluginKey = pluginMatch[1];
+    const pluginBody = pluginMatch[2];
+    if (pluginBody.includes("agent-config:")) {
+      const cmdMatch = pluginBody.match(/command:\s*["']?([^"'\r\n]+)["']?/);
+      if (cmdMatch) {
+        return { command: cmdMatch[1].trim(), args: ["serve"], pluginKey };
+      }
+    }
+    return null;
+  }
+
+  private updateCordisPatchMcpServer(content: string): string {
+    if (!content.trim()) {
+      return [
+        "plugins:",
+        '  "@deepseek-ai/dsh-mcp-client":',
+        "    mcpServers:",
+        "      agent-config:",
+        '        command: "agent-config"',
+        "        args:",
+        '          - "serve"',
+        "",
+      ].join("\n");
+    }
+
+    if (content.includes('"@deepseek-ai/dsh-mcp-client"') && content.includes("agent-config:")) {
+      return content;
+    }
+
+    if (/^\s*plugins:\s*$/m.test(content)) {
+      const pluginBlock = [
+        '  "@deepseek-ai/dsh-mcp-client":',
+        "    mcpServers:",
+        "      agent-config:",
+        '        command: "agent-config"',
+        "        args:",
+        '          - "serve"',
+      ].join("\n");
+      return content.replace(/^(\s*plugins:\s*)$/m, `$1\n${pluginBlock}`);
+    }
+
+    return (
+      content.trimEnd() +
+      '\n\nplugins:\n  "@deepseek-ai/dsh-mcp-client":\n    mcpServers:\n      agent-config:\n        command: "agent-config"\n        args:\n          - "serve"\n'
+    );
   }
 
   async resolveReasoningPolicy(

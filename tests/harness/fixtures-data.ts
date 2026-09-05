@@ -58,25 +58,9 @@ export const FIXTURES_DEFINITIONS: Record<string, Record<string, FixtureFile[]>>
         content:
           'model = "gpt-4o"\n\n[mcp_servers.agent-config]\ncommand = "agent-config"\nargs = ["serve"]\n',
       },
-      {
-        relativePath: ".codex/mcp.json",
-        content: JSON.stringify(
-          {
-            mcpServers: {
-              "agent-config": {
-                command: "agent-config",
-                args: ["serve"],
-              },
-            },
-          },
-          null,
-          2
-        ),
-      },
     ],
     "mcp-absent": [
       { relativePath: ".codex/config.toml", content: 'model = "gpt-4o"\n' },
-      { relativePath: ".codex/mcp.json", content: JSON.stringify({ mcpServers: {} }, null, 2) },
     ],
     "unknown-capability": [
       { relativePath: ".codex/config.toml", content: 'model = "gpt-4o"\n' },

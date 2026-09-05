@@ -40,6 +40,8 @@ export class GeminiCliAdapter implements HostAdapter {
       process.env.GEMINI_CLI === "true" ||
       process.env.ANTIGRAVITY === "1" ||
       process.env.ANTIGRAVITY === "true" ||
+      process.env.AGY === "1" ||
+      process.env.AGY === "true" ||
       (process.env.GEMINI_PROJECT_DIR && process.env.GEMINI_PROJECT_DIR !== "undefined") ||
       (process.env.GEMINI_SESSION_ID && process.env.GEMINI_SESSION_ID !== "undefined") ||
       (process.env.GEMINI_CONFIG_DIR && process.env.GEMINI_CONFIG_DIR !== "undefined") ||
@@ -52,14 +54,16 @@ export class GeminiCliAdapter implements HostAdapter {
     if (
       process.env._ &&
       (path.basename(process.env._).toLowerCase().includes("gemini") ||
-        path.basename(process.env._).toLowerCase().includes("antigravity"))
+        path.basename(process.env._).toLowerCase().includes("antigravity") ||
+        path.basename(process.env._).toLowerCase() === "agy")
     ) {
       return true;
     }
     if (
       process.title &&
       (path.basename(process.title).toLowerCase().includes("gemini") ||
-        path.basename(process.title).toLowerCase().includes("antigravity"))
+        path.basename(process.title).toLowerCase().includes("antigravity") ||
+        path.basename(process.title).toLowerCase() === "agy")
     ) {
       return true;
     }
@@ -90,9 +94,11 @@ export class GeminiCliAdapter implements HostAdapter {
 
     if (workspaceRoot) {
       const candidates = [
+        path.join(workspaceRoot, ".agents", "mcp_config.json"),
         path.join(workspaceRoot, ".gemini"),
         path.join(workspaceRoot, ".gemini", "config.json"),
         path.join(workspaceRoot, ".gemini", "settings.json"),
+        path.join(workspaceRoot, ".gemini", "antigravity-cli", "settings.json"),
         path.join(workspaceRoot, "gemini.json"),
         path.join(workspaceRoot, ".gemini", "mcp.json"),
       ];
@@ -107,11 +113,17 @@ export class GeminiCliAdapter implements HostAdapter {
 
     if (!workspaceRoot) {
       const globalCandidates = [
+        path.join(os.homedir(), ".gemini", "antigravity-cli", "settings.json"),
+        path.join(os.homedir(), ".gemini", "antigravity-cli"),
+        path.join(os.homedir(), ".gemini", "config", "mcp_config.json"),
+        path.join(os.homedir(), ".gemini", "mcp_config.json"),
+        path.join(this.getGlobalGeminiDir(), "antigravity-cli", "settings.json"),
         this.getGlobalGeminiDir(),
         path.join(os.homedir(), ".gemini"),
         path.join(os.homedir(), ".gemini", "config"),
         path.join(os.homedir(), ".gemini", "antigravity"),
         path.join(os.homedir(), ".gemini", "config.json"),
+        path.join(os.homedir(), ".gemini", "settings.json"),
         path.join(os.homedir(), ".config", "gemini"),
         path.join(os.homedir(), ".config", "gemini", "config.json"),
         path.join(os.homedir(), "gemini.json"),
@@ -123,35 +135,55 @@ export class GeminiCliAdapter implements HostAdapter {
   }
 
   async inspectVersion(workspaceRoot?: string): Promise<HostVersionInfo> {
-    let version = process.env.GEMINI_CLI_VERSION || process.env.GEMINI_VERSION;
+    let version =
+      process.env.AGY_VERSION ||
+      process.env.ANTIGRAVITY_VERSION ||
+      process.env.GEMINI_CLI_VERSION ||
+      process.env.GEMINI_VERSION;
     let raw: string | undefined = version;
 
     if (!version && workspaceRoot) {
-      const versionFile = path.join(workspaceRoot, ".gemini", "version");
-      if (fs.existsSync(versionFile)) {
-        try {
-          raw = fs.readFileSync(versionFile, "utf-8").trim();
-          version = raw;
-        } catch {
-          // Skip read error
+      const versionCandidates = [
+        path.join(workspaceRoot, ".gemini", "version"),
+        path.join(workspaceRoot, ".agents", "version"),
+      ];
+      for (const versionFile of versionCandidates) {
+        if (fs.existsSync(versionFile)) {
+          try {
+            raw = fs.readFileSync(versionFile, "utf-8").trim();
+            version = raw;
+            break;
+          } catch {
+            // Skip read error
+          }
         }
       }
     }
 
     if (!version) {
-      const globalVersionFile = path.join(this.getGlobalGeminiDir(), "version");
-      if (fs.existsSync(globalVersionFile)) {
-        try {
-          raw = fs.readFileSync(globalVersionFile, "utf-8").trim();
-          version = raw;
-        } catch {
-          // Skip read error
+      const globalVersionFiles = [
+        path.join(os.homedir(), ".gemini", "antigravity-cli", "version"),
+        path.join(this.getGlobalGeminiDir(), "version"),
+      ];
+      for (const globalVersionFile of globalVersionFiles) {
+        if (fs.existsSync(globalVersionFile)) {
+          try {
+            raw = fs.readFileSync(globalVersionFile, "utf-8").trim();
+            version = raw;
+            break;
+          } catch {
+            // Skip read error
+          }
         }
       }
     }
 
     if (!version) {
-      let cliResult = await this.runCliCommand("gemini", ["--version"], workspaceRoot);
+      // 1. Check canonical agy binary first
+      let cliResult = await this.runCliCommand("agy", ["--version"], workspaceRoot);
+      if (!cliResult) {
+        cliResult = await this.runCliCommand("gemini", ["--version"], workspaceRoot);
+      }
       if (!cliResult) {
         cliResult = await this.runCliCommand("antigravity", ["--version"], workspaceRoot);
       }
@@ -199,8 +231,9 @@ export class GeminiCliAdapter implements HostAdapter {
 
     // 1. Project-level configs (highest precedence)
     const projectCandidates = [
-      path.join(workspace, ".gemini", "config.json"),
+      path.join(workspace, ".gemini", "antigravity-cli", "settings.json"),
       path.join(workspace, ".gemini", "settings.json"),
+      path.join(workspace, ".gemini", "config.json"),
       path.join(workspace, "gemini.json"),
     ];
 
@@ -220,8 +253,11 @@ export class GeminiCliAdapter implements HostAdapter {
 
     // 2. User-level configs
     const userCandidates = [
-      path.join(this.getGlobalGeminiDir(), "config.json"),
+      path.join(os.homedir(), ".gemini", "antigravity-cli", "settings.json"),
+      path.join(this.getGlobalGeminiDir(), "antigravity-cli", "settings.json"),
       path.join(this.getGlobalGeminiDir(), "settings.json"),
+      path.join(this.getGlobalGeminiDir(), "config.json"),
+      path.join(os.homedir(), ".gemini", "settings.json"),
       path.join(os.homedir(), ".gemini", "config", "config.json"),
       path.join(os.homedir(), ".gemini", "config.json"),
       path.join(os.homedir(), ".config", "gemini", "config.json"),
@@ -368,15 +404,17 @@ export class GeminiCliAdapter implements HostAdapter {
   }
 
   async inspectExecutionTopologyCapabilities(
-    _workspaceRoot?: string
+    workspaceRoot?: string
   ): Promise<TopologyCapabilities> {
-    // Gemini CLI is a single-session CLI workflow tool without subagent orchestration or background worker loops
+    const caps = await this.inspectCapabilities(workspaceRoot);
+    const subagentsAvailable = caps.capabilities.subagents.state === "available";
+    const parallelismAvailable = caps.capabilities.parallelism.state === "available";
     return {
       supports_single_session: true,
-      supports_subagents: false,
-      supports_multi_agent: false,
-      supports_parallel_execution: false,
-      max_concurrency: 1,
+      supports_subagents: subagentsAvailable,
+      supports_multi_agent: parallelismAvailable,
+      supports_parallel_execution: parallelismAvailable,
+      max_concurrency: caps.capabilities.concurrency?.max_concurrency || 1,
     };
   }
 
@@ -386,6 +424,61 @@ export class GeminiCliAdapter implements HostAdapter {
 
     const hasReasoning = reasoningOpts.supported_values.length > 0;
     const hasModels = models.length > 0;
+
+    const effective = this.readEffectiveConfig(workspaceRoot);
+    const cfg = effective?.config || {};
+
+    const subagentsEvidence =
+      process.env.ANTIGRAVITY_SUBAGENTS === "1" ||
+      process.env.ANTIGRAVITY_SUBAGENTS === "true" ||
+      process.env.AGY_SUBAGENTS === "1" ||
+      process.env.AGY_SUBAGENTS === "true" ||
+      process.env.GEMINI_SUBAGENTS === "1" ||
+      process.env.GEMINI_SUBAGENTS === "true" ||
+      cfg.subagents === true ||
+      cfg.subagents?.enabled === true ||
+      cfg.features?.subagents === true;
+
+    const teamworkEvidence =
+      process.env.ANTIGRAVITY_TEAMWORK === "1" ||
+      process.env.ANTIGRAVITY_TEAMWORK === "true" ||
+      process.env.ANTIGRAVITY_COLLABORATION === "1" ||
+      process.env.ANTIGRAVITY_COLLABORATION === "true" ||
+      process.env.AGY_TEAMWORK === "1" ||
+      process.env.AGY_TEAMWORK === "true" ||
+      process.env.GEMINI_TEAMWORK === "1" ||
+      process.env.GEMINI_TEAMWORK === "true" ||
+      cfg.teamwork === true ||
+      cfg.teamwork?.enabled === true ||
+      cfg.collaboration === true ||
+      cfg.collaboration?.enabled === true ||
+      cfg.features?.teamwork === true ||
+      cfg.features?.collaboration === true;
+
+    const subagentsState = subagentsEvidence ? "available" : "unavailable";
+    const subagentsLocator = subagentsEvidence
+      ? effective?.sourcePath || "antigravity:subagents"
+      : "gemini-cli-architecture";
+    const subagentsEvidenceKind = subagentsEvidence
+      ? effective?.sourcePath
+        ? ("host-config" as const)
+        : ("host-runtime" as const)
+      : ("host-runtime" as const);
+
+    const perAgentModelSelectionState =
+      subagentsEvidence &&
+      (cfg.per_agent_model_selection === true || cfg.subagents?.per_agent_models === true)
+        ? "available"
+        : "unavailable";
+
+    const maxConcurrency =
+      typeof cfg.max_concurrency === "number"
+        ? cfg.max_concurrency
+        : typeof cfg.concurrency === "number"
+        ? cfg.concurrency
+        : teamworkEvidence
+        ? 4
+        : 1;
 
     return {
       host_id: this.id,
@@ -397,24 +490,23 @@ export class GeminiCliAdapter implements HostAdapter {
       supported_effort_values: reasoningOpts.supported_values,
       default_effort_value: reasoningOpts.default_value,
       capabilities: {
-        // Child agents and per-worker model controls are strictly unavailable in Gemini CLI
         subagents: {
-          state: "unavailable",
-          evidence: { kind: "host-runtime", locator: "gemini-cli-architecture" },
+          state: subagentsState,
+          evidence: { kind: subagentsEvidenceKind, locator: subagentsLocator },
         },
         per_agent_model_selection: {
-          state: "unavailable",
-          evidence: { kind: "host-runtime", locator: "gemini-cli-architecture" },
+          state: perAgentModelSelectionState,
+          evidence: { kind: subagentsEvidenceKind, locator: subagentsLocator },
         },
         threads: {
-          state: "unavailable",
+          state: teamworkEvidence ? "available" : "unavailable",
         },
         parallelism: {
-          state: "unavailable",
+          state: teamworkEvidence ? "available" : "unavailable",
         },
         concurrency: {
-          state: "unavailable",
-          max_concurrency: 1,
+          state: teamworkEvidence ? "available" : "unavailable",
+          max_concurrency: maxConcurrency,
         },
         model_selection: {
           state: hasModels ? "available" : "unknown",
@@ -439,13 +531,20 @@ export class GeminiCliAdapter implements HostAdapter {
     const workspace = workspaceRoot || process.cwd();
 
     const candidateFiles = [
+      path.join(workspace, ".agents", "mcp_config.json"),
+      path.join(workspace, ".gemini", "mcp_config.json"),
       path.join(workspace, ".gemini", "config.json"),
       path.join(workspace, ".gemini", "settings.json"),
+      path.join(workspace, ".gemini", "antigravity-cli", "settings.json"),
       path.join(workspace, "gemini.json"),
       path.join(workspace, ".gemini", "mcp.json"),
+      path.join(os.homedir(), ".gemini", "config", "mcp_config.json"),
+      path.join(os.homedir(), ".gemini", "mcp_config.json"),
+      path.join(os.homedir(), ".gemini", "antigravity-cli", "settings.json"),
+      path.join(this.getGlobalGeminiDir(), "config", "mcp_config.json"),
+      path.join(this.getGlobalGeminiDir(), "mcp_config.json"),
       path.join(this.getGlobalGeminiDir(), "config.json"),
       path.join(os.homedir(), ".gemini", "config", "config.json"),
-      path.join(os.homedir(), ".gemini", "config", "mcp_config.json"),
       path.join(os.homedir(), ".gemini", "config.json"),
       path.join(os.homedir(), ".config", "gemini", "config.json"),
     ];
@@ -503,7 +602,9 @@ export class GeminiCliAdapter implements HostAdapter {
     const targetFile = this.determineMcpRegistrationPath(workspace, resolvedScope);
 
     let existingContent: string | null = null;
-    let initialText = "{\n  \"mcp\": {\n    \"servers\": {}\n  }\n}\n";
+    let initialText = targetFile.endsWith("mcp_config.json")
+      ? "{\n  \"mcpServers\": {}\n}\n"
+      : "{\n  \"mcp\": {\n    \"servers\": {}\n  }\n}\n";
 
     if (fs.existsSync(targetFile)) {
       existingContent = await fsp.readFile(targetFile, "utf-8");
@@ -524,7 +625,10 @@ export class GeminiCliAdapter implements HostAdapter {
 
       const formatting = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
       let edits: jsonc.Edit[];
-      if (parsed && typeof parsed === "object" && parsed.mcpServers !== undefined) {
+      if (
+        (parsed && typeof parsed === "object" && parsed.mcpServers !== undefined) ||
+        targetFile.endsWith("mcp_config.json")
+      ) {
         edits = jsonc.modify(
           initialText,
           ["mcpServers", "agent-config"],
@@ -561,12 +665,19 @@ export class GeminiCliAdapter implements HostAdapter {
     }
 
     const formatting = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
-    const edits = jsonc.modify(
-      initialText,
-      ["mcp", "servers", "agent-config"],
-      { command: "agent-config", args: ["serve"] },
-      formatting
-    );
+    const edits = targetFile.endsWith("mcp_config.json")
+      ? jsonc.modify(
+          initialText,
+          ["mcpServers", "agent-config"],
+          { command: "agent-config", args: ["serve"] },
+          formatting
+        )
+      : jsonc.modify(
+          initialText,
+          ["mcp", "servers", "agent-config"],
+          { command: "agent-config", args: ["serve"] },
+          formatting
+        );
     const newContent = jsonc.applyEdits(initialText, edits);
     const diff = createUnifiedDiff(targetFile, existingContent, newContent);
     const previewId = `preview-companion-gemini-${Date.now()}`;
@@ -833,6 +944,8 @@ export class GeminiCliAdapter implements HostAdapter {
   determineMcpRegistrationPath(workspace: string, scope?: "project" | "global" | "user"): string {
     if (scope === "global" || scope === "user" || !workspace) {
       const userCandidates = [
+        path.join(os.homedir(), ".gemini", "config", "mcp_config.json"),
+        path.join(os.homedir(), ".gemini", "mcp_config.json"),
         path.join(this.getGlobalGeminiDir(), "config.json"),
         path.join(os.homedir(), ".gemini", "config", "config.json"),
         path.join(os.homedir(), ".gemini", "config.json"),
@@ -840,10 +953,12 @@ export class GeminiCliAdapter implements HostAdapter {
       for (const c of userCandidates) {
         if (fs.existsSync(c)) return c;
       }
-      return path.join(this.getGlobalGeminiDir(), "config.json");
+      return path.join(os.homedir(), ".gemini", "config", "mcp_config.json");
     }
 
     const candidates = [
+      path.join(workspace, ".agents", "mcp_config.json"),
+      path.join(workspace, ".gemini", "mcp_config.json"),
       path.join(workspace, ".gemini", "config.json"),
       path.join(workspace, ".gemini", "settings.json"),
       path.join(workspace, "gemini.json"),
@@ -851,7 +966,10 @@ export class GeminiCliAdapter implements HostAdapter {
     for (const c of candidates) {
       if (fs.existsSync(c)) return c;
     }
-    return path.join(workspace, ".gemini", "config.json");
+    if (fs.existsSync(path.join(workspace, ".gemini"))) {
+      return path.join(workspace, ".gemini", "config.json");
+    }
+    return path.join(workspace, ".agents", "mcp_config.json");
   }
 
   resolveConfigPath(workspace: string): string | null {

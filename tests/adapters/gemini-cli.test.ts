@@ -293,7 +293,7 @@ describe("Gemini CLI Native Adapter Tests (§33)", () => {
 
       // Check file content
       const content = await fsp.readFile(
-        path.join(workspaceDir, ".gemini", "config.json"),
+        path.join(workspaceDir, ".agents", "mcp_config.json"),
         "utf-8"
       );
       expect(content).toContain('"agent-config"');
@@ -331,8 +331,8 @@ describe("Gemini CLI Native Adapter Tests (§33)", () => {
 
       expect(preview.supported).toBe(true);
       expect(preview.scope).toBe("global");
-      expect(preview.target_file).toBe(path.join(userHomeDir, ".gemini", "config.json"));
-      expect(preview.mutation_targets).toContain(path.join(userHomeDir, ".gemini", "config.json"));
+      expect(preview.target_file).toBe(path.join(userHomeDir, ".gemini", "config", "mcp_config.json"));
+      expect(preview.mutation_targets).toContain(path.join(userHomeDir, ".gemini", "config", "mcp_config.json"));
       expect(preview.preview_hash).toBeDefined();
     });
   });
@@ -370,6 +370,70 @@ describe("Gemini CLI Native Adapter Tests (§33)", () => {
       const driftValidation = await adapter.validateConfiguration(singlePlan, workspaceDir);
       expect(driftValidation.valid).toBe(false);
       expect(driftValidation.errors?.some((e) => e.includes("Model mismatch"))).toBe(true);
+    });
+  });
+
+  describe("Antigravity Canonical Evidence (§33, Phase 3)", () => {
+    it("identifies Antigravity from AGY=1 and canonical binary name", async () => {
+      const adapter = new GeminiCliAdapter();
+      expect(adapter.hasActiveRuntimeContext(workspaceDir)).toBe(false);
+
+      process.env.AGY = "1";
+      expect(adapter.hasActiveRuntimeContext(workspaceDir)).toBe(true);
+      expect(await adapter.identifyHost(workspaceDir)).toBe(true);
+      delete process.env.AGY;
+
+      process.env.AGY_VERSION = "2.5.0";
+      const ver = await adapter.inspectVersion(workspaceDir);
+      expect(ver.version).toBe("2.5.0");
+      expect(ver.compatibility).toBe("supported");
+      delete process.env.AGY_VERSION;
+    });
+
+    it("reads settings from ~/.gemini/antigravity-cli/settings.json", async () => {
+      const agyDir = path.join(userHomeDir, ".gemini", "antigravity-cli");
+      await fsp.mkdir(agyDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(agyDir, "settings.json"),
+        JSON.stringify({ model: "gemini-2.5-pro", reasoning_effort: "high" }),
+        "utf-8"
+      );
+
+      const adapter = new GeminiCliAdapter();
+      const effective = adapter.readEffectiveConfig();
+      expect(effective?.config.model).toBe("gemini-2.5-pro");
+      expect(effective?.sourcePath).toContain("antigravity-cli/settings.json");
+    });
+
+    it("discovers subagent and teamwork capabilities when evidenced", async () => {
+      const adapter = new GeminiCliAdapter();
+
+      // Set teamwork and subagent config
+      const agyDir = path.join(userHomeDir, ".gemini", "antigravity-cli");
+      await fsp.mkdir(agyDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(agyDir, "settings.json"),
+        JSON.stringify({
+          model: "gemini-2.5-pro",
+          subagents: true,
+          teamwork: true,
+          max_concurrency: 6,
+        }),
+        "utf-8"
+      );
+
+      const caps = await adapter.inspectCapabilities();
+      expect(caps.capabilities.subagents.state).toBe("available");
+      expect(caps.capabilities.threads.state).toBe("available");
+      expect(caps.capabilities.parallelism.state).toBe("available");
+      expect(caps.capabilities.concurrency?.state).toBe("available");
+      expect(caps.capabilities.concurrency?.max_concurrency).toBe(6);
+
+      const topo = await adapter.inspectExecutionTopologyCapabilities();
+      expect(topo.supports_subagents).toBe(true);
+      expect(topo.supports_multi_agent).toBe(true);
+      expect(topo.supports_parallel_execution).toBe(true);
+      expect(topo.max_concurrency).toBe(6);
     });
   });
 });

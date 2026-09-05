@@ -488,5 +488,37 @@ describe("OpenCode Native Adapter Hardening Tests (§29, §30, §31, §32, §75)
       expect(globalPreview.target_file).toBe(path.join(globalConfigDir, "opencode.json"));
       expect(globalPreview.mutation_targets).toEqual([path.join(globalConfigDir, "opencode.json")]);
     });
+
+    it("ensures .opencode/opencode.json overlays .opencode.json and opencode.json and global per official precedence", async () => {
+      // 1. Global config defines model A
+      await fsp.writeFile(
+        path.join(globalConfigDir, "opencode.json"),
+        JSON.stringify({ model: "global/model-a", theme: "global-theme" }),
+        "utf-8"
+      );
+
+      // 2. Base project opencode.json defines model B
+      await fsp.writeFile(
+        path.join(workspaceDir, "opencode.json"),
+        JSON.stringify({ model: "project/model-b", concurrency: 4 }),
+        "utf-8"
+      );
+
+      // 3. Dot-directory .opencode/opencode.json defines model C (highest precedence)
+      const dotOpencodeDir = path.join(workspaceDir, ".opencode");
+      await fsp.mkdir(dotOpencodeDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(dotOpencodeDir, "opencode.json"),
+        JSON.stringify({ model: "project-dot/model-c" }),
+        "utf-8"
+      );
+
+      const adapter = new OpenCodeAdapter();
+      const { config: effective } = adapter.getEffectiveConfig(workspaceDir);
+
+      expect(effective.model).toBe("project-dot/model-c");
+      expect(effective.concurrency).toBe(4); // from opencode.json
+      expect(effective.theme).toBe("global-theme"); // from global
+    });
   });
 });

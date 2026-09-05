@@ -250,15 +250,17 @@ describe("Codex Native Adapter Hardening Tests (§25, §26, §74)", () => {
       const preview = await adapter.previewCompanionRegistration(workspaceDir, "project");
 
       expect(preview.mutation_targets).toEqual([
-        path.join(workspaceDir, ".codex", "mcp.json"),
+        path.join(workspaceDir, ".codex", "config.toml"),
       ]);
+      expect(preview.diff).toContain("[mcp_servers.agent-config]");
 
       const apply = await adapter.applyCompanionRegistration(preview.preview_hash!, workspaceDir);
       expect(apply.success).toBe(true);
 
       const status = await adapter.inspectCompanionRegistration(workspaceDir, "project");
       expect(status.registered).toBe(true);
-      expect(status.target_file).toBe(path.join(workspaceDir, ".codex", "mcp.json"));
+      expect(status.target_file).toBe(path.join(workspaceDir, ".codex", "config.toml"));
+      expect(status.command).toBe("agent-config");
     });
 
     it("manages companion registration in user scope without touching workspace", async () => {
@@ -266,8 +268,9 @@ describe("Codex Native Adapter Hardening Tests (§25, §26, §74)", () => {
       const preview = await adapter.previewCompanionRegistration(undefined, "user");
 
       expect(preview.mutation_targets).toEqual([
-        path.join(codexHomeDir, "mcp.json"),
+        path.join(codexHomeDir, "config.toml"),
       ]);
+      expect(preview.diff).toContain("[mcp_servers.agent-config]");
 
       const apply = await adapter.applyCompanionRegistration(preview.preview_hash!, undefined);
       expect(apply.success).toBe(true);
@@ -275,20 +278,17 @@ describe("Codex Native Adapter Hardening Tests (§25, §26, §74)", () => {
       // User scope is registered
       const userStatus = await adapter.inspectCompanionRegistration(undefined, "user");
       expect(userStatus.registered).toBe(true);
+      expect(userStatus.command).toBe("agent-config");
 
       // Workspace remains untouched
-      expect(fs.existsSync(path.join(workspaceDir, ".codex", "mcp.json"))).toBe(false);
+      expect(fs.existsSync(path.join(workspaceDir, ".codex", "config.toml"))).toBe(false);
     });
 
     it("inspectCompanionRegistration falls back from project to user scope when workspace is unregistered", async () => {
-      // Register in user scope only
+      // Register in user scope only via TOML
       await fsp.writeFile(
-        path.join(codexHomeDir, "mcp.json"),
-        JSON.stringify({
-          mcpServers: {
-            "agent-config": { command: "agent-config", args: ["serve"] },
-          },
-        }),
+        path.join(codexHomeDir, "config.toml"),
+        '[mcp_servers.agent-config]\ncommand = "agent-config"\nargs = ["serve"]\n',
         "utf-8"
       );
 
@@ -296,7 +296,8 @@ describe("Codex Native Adapter Hardening Tests (§25, §26, §74)", () => {
       // Inspecting workspace falls back to effective user registration
       const status = await adapter.inspectCompanionRegistration(workspaceDir);
       expect(status.registered).toBe(true);
-      expect(status.target_file).toBe(path.join(codexHomeDir, "mcp.json"));
+      expect(status.target_file).toBe(path.join(codexHomeDir, "config.toml"));
+      expect(status.command).toBe("agent-config");
     });
   });
 });
