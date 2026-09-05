@@ -80,12 +80,12 @@ Schemas are defined under `schemas/` and canonical contracts under `src/contract
 
 | Harness | Tier | Scope | Configuration Path | MCP Registration |
 |---|---|---|---|---|
-| Codex CLI | Native | Project / User | `.codex/config.toml` | `.codex/mcp.json` |
-| Claude Code | Native | Project / User | `.claude.json` | `.claude/mcp.json` / `~/.claude.json` |
+| Codex CLI | Native | Project / User | `.codex/config.toml` (or `$CODEX_HOME/config.toml`) | `.codex/config.toml` (`[mcp_servers.agent-config]`) |
+| Claude Code | Native | Project / User | `.mcp.json` / `~/.claude.json` | `.mcp.json` (project) / `~/.claude.json` (user) |
 | Antigravity / Gemini CLI | Native | Project / User | `.gemini/config.json` | `.gemini/config.json` |
-| DeepSeek Harness (DSH) | Native | Project / User | `dsh.config.json` | `dsh.config.json` |
+| DeepSeek Harness (DSH) | Native | Project / User | `cordis.patch.yml` / `$DSH_HOME/profiles/<name>/cordis.patch.yml` | `@deepseek-ai/dsh-mcp-client` in `cordis.patch.yml` |
 | OpenCode | Native | Project / User | `opencode.json` / `opencode.jsonc` | `opencode.json` / `opencode.jsonc` |
-| ZCode | Native (Identity Freeze Pending) | Project / User | TBD (Ticket 06) | TBD |
+| ZCode | Native | Project / User | `<workspace>/.zcode/config.json` / `~/.zcode/cli/config.json` | `.zcode/config.json` (`mcp.servers["agent-config"]`) |
 | Cursor | Native | Project / User | `.cursor/settings.json` | `.cursor/mcp.json` |
 | Grok Build | Native | Project / User | `.grok/config.toml` | `.grok/config.toml` |
 | Hermes | Native | User / Project | `~/.hermes/config.json` | `~/.hermes/config.json` |

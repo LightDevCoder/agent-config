@@ -21,7 +21,7 @@
 ## Official Upstream, Documentation, & Config Schema Sources
 - **Official Upstream:** OpenAI Codex (`codex-cli`)
 - **Official Documentation:** Built-in CLI help (`codex --help`, `codex exec --help`, `codex mcp --help`, `codex doctor --help`)
-- **Official Config/Schema Source:** TOML configuration schema read from `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`), per-agent TOML files under `.codex/agents/*.toml`, and `.codex/mcp.json` / `$CODEX_HOME/mcp.json`.
+- **Official Config/Schema Source:** TOML configuration schema read from `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`), per-agent TOML files under `.codex/agents/*.toml`, and secondary fallback `mcp.json`.
 
 ## Executable Detection & Version Detection
 - **Executable Detection:**
@@ -41,8 +41,8 @@
 
 ## Config Files, Scopes, & Precedence
 - **Host Config Files:**
-  - User/Global Scope: `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`), `$CODEX_HOME/agents/*.toml`, `$CODEX_HOME/mcp.json`.
-  - Project Scope: `<workspace>/.codex/config.toml` (or `<workspace>/codex.toml`), `<workspace>/.codex/agents/*.toml`, `<workspace>/.codex/mcp.json`.
+  - User/Global Scope: `$CODEX_HOME/config.toml` (or `~/.codex/config.toml`), `$CODEX_HOME/agents/*.toml`.
+  - Project Scope: `<workspace>/.codex/config.toml` (or `<workspace>/codex.toml`), `<workspace>/.codex/agents/*.toml`.
 - **Config Hierarchy & Precedence:**
   - Project-level `<workspace>/.codex/config.toml` and `.codex/agents/*.toml` override user-level `$CODEX_HOME/config.toml`.
   - Environment overrides (`-c key=value` flags or runtime variables) take precedence over static configuration files.
@@ -83,35 +83,31 @@
 ## MCP Support, Registration Mechanism, Scopes, & Doctor/Status
 - **Host Mechanism:**
   - Native CLI command: `codex mcp add <NAME> -- <COMMAND>...` or `codex mcp list`, `codex mcp get <NAME>`, `codex mcp remove <NAME>`.
-  - File format: JSON with `mcpServers` object:
-    ```json
-    {
-      "mcpServers": {
-        "agent-config": {
-          "command": "agent-config",
-          "args": ["serve"]
-        }
-      }
-    }
+  - Canonical format: TOML configuration table in `config.toml`:
+    ```toml
+    [mcp_servers.agent-config]
+    command = "agent-config"
+    args = ["serve"]
     ```
-  - Project Scope target: `<workspace>/.codex/mcp.json`.
-  - User/Global Scope target: `$CODEX_HOME/mcp.json` or `~/.codex/mcp.json`.
+  - Project Scope target: `<workspace>/.codex/config.toml`.
+  - User/Global Scope target: `$CODEX_HOME/config.toml` or `~/.codex/config.toml`.
+  - Secondary fallback: `.codex/mcp.json` (JSON `mcpServers` format).
   - Doctor command: `codex doctor` verifies local config, auth, and runtime health.
 - **Adapter Adaptation:**
   - Previews generate unified diffs with cryptographic baseline hash and preview hash (`FrozenMutationPreview`).
   - Scope is strictly preserved: project preview -> project apply; user preview -> user apply.
   - Inspection checks project scope first; falls back to user scope if unconfigured.
-  - Doctor/validation validates JSON parsing, server command/args presence, and reachability.
+  - Doctor/validation validates TOML/JSON parsing, server command/args presence, and reachability.
 
 ## Machine-Readable Inspection Surfaces
-- Config files: `.codex/config.toml`, `.codex/agents/*.toml`, `.codex/mcp.json`.
+- Config files: `.codex/config.toml`, `.codex/agents/*.toml`, fallback `.codex/mcp.json`.
 - CLI commands: `codex --version`, `codex mcp list`, `codex doctor`.
 - State databases & caches: `models_cache.json`, `.codex-global-state.json`.
 
 ## Writable Configuration Targets & Protected Configuration
 - **Writable Targets:**
-  - Project Scope: `<workspace>/.codex/config.toml`, `<workspace>/.codex/agents/<ticket_id>.toml`, `<workspace>/.codex/mcp.json`.
-  - User Scope: `$CODEX_HOME/config.toml`, `$CODEX_HOME/mcp.json`.
+  - Project Scope: `<workspace>/.codex/config.toml`, `<workspace>/.codex/agents/<ticket_id>.toml`.
+  - User Scope: `$CODEX_HOME/config.toml`.
 - **Protected / Managed Configuration:**
   - Unrelated keys in `config.toml` (e.g. `marketplaces`, `plugins`, `notify`, `personality`, `service_tier`) are preserved untouched during mutation.
   - Session databases (`*.sqlite`, `sessions/`) and auth credentials (`auth.json`) are strictly protected and never modified by adapter.

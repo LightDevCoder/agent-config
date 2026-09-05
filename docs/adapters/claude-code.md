@@ -26,8 +26,8 @@
 - **Official Config/Schema Source:** JSON / JSONC settings hierarchy:
   - Global user configuration: `~/.claude/settings.json`, `~/.claude.json`, `$CLAUDE_CONFIG_DIR/`
   - Project configuration: `<workspace>/.claude/settings.json`, `<workspace>/.claude.json`
-  - Project MCP configuration: `<workspace>/.mcp.json` (native `claude mcp add --scope project`), `<workspace>/.claude/mcp.json`, or `<workspace>/.claude.json`
-  - User MCP configuration: `~/.claude.json` (native `claude mcp add --scope user`), `~/.claude/settings.json`
+  - Project MCP configuration: `<workspace>/.mcp.json` (canonical `claude mcp add --scope project`)
+  - User MCP configuration: `~/.claude.json` (canonical `claude mcp add --scope user`)
   - Custom agent definitions: `<workspace>/.claude/agents/*.md`, `~/.claude/agents/*.md`
 
 ## Executable Detection & Version Detection
@@ -48,7 +48,7 @@
 ## Config Files, Scopes, & Precedence
 - **Host Config Files & Scopes:**
   - User Scope: `~/.claude/settings.json`, `~/.claude.json` (stores user preferences, credentials, and user-scoped `mcpServers`), `~/.claude/agents/*.md`.
-  - Project Scope: `<workspace>/.claude/settings.json` (primary project settings), `<workspace>/.claude.json` (alternative project configuration), `<workspace>/.claude/agents/*.md` (project subagents), `<workspace>/.mcp.json` / `<workspace>/.claude/mcp.json` (project MCP servers).
+  - Project Scope: `<workspace>/.claude/settings.json` (primary project settings), `<workspace>/.claude.json` (alternative project configuration), `<workspace>/.claude/agents/*.md` (project subagents), `<workspace>/.mcp.json` (project MCP servers).
   - Local Scope: `<workspace>/.claude/settings.local.json`, user-local project settings in `~/.claude.json` under `projects[<cwd>]`.
 - **Config Hierarchy & Precedence:**
   1. Project configuration (`.claude/settings.json`, `.claude.json`) overrides user configuration (`~/.claude/settings.json`, `~/.claude.json`).
@@ -105,24 +105,24 @@
 - **Host Mechanism:**
   - Native CLI management: `claude mcp add --scope <local|user|project> <name> <commandOrUrl> [args...]`, `claude mcp add-json`, `claude mcp list`, `claude mcp get <name>`, `claude mcp remove`.
   - Formats and targets:
-    - Project scope: `.mcp.json` at project root (or `.claude/mcp.json` / `.claude.json`), using `{"mcpServers": { ... }}`.
-    - User scope: `~/.claude.json` or `~/.claude/settings.json`, using `{"mcpServers": { ... }}`.
+    - Project scope: `.mcp.json` at project root using `{"mcpServers": { ... }}` (conforming to `claude mcp add --scope project`).
+    - User scope: `~/.claude.json` using `{"mcpServers": { ... }}` (conforming to `claude mcp add --scope user`).
     - Local scope: `~/.claude.json` under `projects[<cwd>].mcpServers`.
   - Health/doctor: `claude mcp list` health-checks approved servers; `claude doctor` validates installation and settings files.
 - **Adapter Adaptation:**
-  - In project scope, checks existing project MCP targets (`.mcp.json`, `.claude/mcp.json`, `.claude.json`, `.claude/settings.json`).
+  - In project scope, targets canonical `.mcp.json` at workspace root (fallback inspection checks legacy targets).
   - Previews produce exact unified diffs with cryptographic baseline hash and preview hash (`FrozenMutationPreview`).
   - Apply strictly preserves scope without re-deriving targets.
 
 ## Machine-Readable Inspection Surfaces
 - Settings files: `.claude/settings.json`, `.claude.json`, `.claude.local.json`, `~/.claude.json`.
-- MCP targets: `.mcp.json`, `.claude/mcp.json`, `~/.claude.json`.
+- MCP targets: `.mcp.json` (canonical project), `~/.claude.json` (canonical user).
 - Agents directory: `.claude/agents/*.md`, `~/.claude/agents/*.md`.
 - CLI commands: `claude --version`, `claude mcp list`, `claude doctor`, `claude agents --json`.
 
 ## Writable Configuration Targets & Protected Configuration
 - **Writable Targets:**
-  - Project Scope: `<workspace>/.claude/settings.json`, `<workspace>/.claude/agents/<ticket_id>.md`, `<workspace>/.claude/mcp.json` or `<workspace>/.mcp.json`.
+  - Project Scope: `<workspace>/.claude/settings.json`, `<workspace>/.claude/agents/<ticket_id>.md`, `<workspace>/.mcp.json`.
   - User Scope: `~/.claude/settings.json`, `~/.claude.json`.
 - **Protected / Managed Configuration:**
   - Preserves unrelated user/project settings (`allowedTools`, `theme`, `permissions`, `projects`, etc.) via JSONC edit preserving comments and structure.
