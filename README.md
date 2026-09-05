@@ -27,8 +27,8 @@ agent-config (Companion MCP Server)
        └─ validate_configuration: Confirms applied state matches expected
        ▼
 Host Adapters
-       ├─ Codex Adapter
-       ├─ Real Non-Codex Adapter (e.g. OpenCode / Claude Code / Cursor)
+       ├─ P0 Native: Codex, OpenCode, Claude Code, Copilot CLI, Gemini CLI, Cursor, Kiro, Zed, DSH, Grok Build
+       ├─ P1 Native: Amp, Windsurf/Cascade, Cline, Roo Code
        └─ Generic Adapter (plan-only fallback)
 ```
 
@@ -67,11 +67,35 @@ Host Adapters
 
 ## Canonical Schemas
 
-Schemas are defined under `schemas/`:
+Schemas are defined under `schemas/` and canonical contracts under `src/contracts/`:
 
 - `schemas/profile.schema.json`: User-confirmed profile schema (host+workspace scoped, single/multi modes, tier mapping, abstract effort policies).
 - `schemas/host-capabilities.schema.json`: Host capability evidence schema (models inventory, discrete effort values, concurrency, subagents/threads).
 - `schemas/execution-config.schema.json`: Resolved execution configuration schema (topology, controller/worker models and resolved discrete effort values).
+- `schemas/preview.schema.json`: Canonical configuration preview schema (`preview_id`, `preview_hash`, `diff`, `expires_at`, `target`, `baseline_hash`).
+- `schemas/apply.schema.json`: Canonical apply mutation result schema (`preview_id`, `applied_targets`, `target`, `baseline_hash`, `message`).
+- `schemas/validation.schema.json`: Canonical post-apply host validation schema (`valid`, `workspace`, `message`, `details`).
+- `schemas/companion-contract.schema.json`: Canonical companion MCP contract specification covering protocol version 1, all 8 tools, request/response schemas, and error format.
+
+## Harness Support Matrix
+
+| Harness | Tier | Scope | Configuration Path | MCP Registration |
+|---|---|---|---|---|
+| Codex CLI | P0 Native | Project / User | `.codex/config.toml` | `.codex/mcp.json` |
+| OpenCode | P0 Native | Project / User | `opencode.json` / `opencode.jsonc` | `opencode.json` / `opencode.jsonc` |
+| Claude Code | P0 Native | Project / User | `.claude.json` | `.claude/mcp.json` / `~/.claude.json` |
+| GitHub Copilot CLI | P0 Native | Project / User | `.github/copilot/config.json` | `.github/copilot/mcp.json` |
+| Gemini CLI | P0 Native | Project / User | `.gemini/config.json` | `.gemini/config.json` |
+| Cursor | P0 Native | Project / User | `.cursor/settings.json` | `.cursor/mcp.json` |
+| Kiro | P0 Native | Project / User | `.kiro/config.json` | `.kiro/mcp.json` |
+| Zed | P0 Native | Project / User | `.zed/settings.json` | `.zed/settings.json` |
+| DeepSeek Harness (DSH) | P0 Native | Project / User | `dsh.config.json` | `dsh.config.json` |
+| Grok Build | P0 Native | Project / User | `.grok/config.toml` | `.grok/config.toml` |
+| Amp | P1 Native | Project / User | `.amp/settings.json` | `.amp/mcp.json` |
+| Windsurf / Cascade | P1 Native | Project / User | `.windsurf/settings.json` | `.codeium/windsurf/mcp_config.json` |
+| Cline | P1 Native | Project / User | `.cline/settings.json` | `.cline/mcp.json` |
+| Roo Code | P1 Native | Project / User | `.roo/settings.json` | `.roo/mcp.json` |
+| Generic / Fallback | Fallback | Plan-only | N/A (read-only execution plan) | Manual export |
 
 ## Development
 
