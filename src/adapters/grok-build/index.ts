@@ -84,6 +84,42 @@ export interface GrokLayeredConfig {
   userFile?: string;
 }
 
+function splitTomlKeyPath(header: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let quoteChar = "";
+
+  for (let i = 0; i < header.length; i++) {
+    const ch = header[i];
+    if ((ch === '"' || ch === "'") && (!inQuotes || quoteChar === ch)) {
+      if (inQuotes) {
+        inQuotes = false;
+        quoteChar = "";
+      } else {
+        inQuotes = true;
+        quoteChar = ch;
+      }
+    } else if (ch === "." && !inQuotes) {
+      if (current.trim()) {
+        parts.push(current.trim());
+      }
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+  return parts.map((p) => {
+    if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) {
+      return p.slice(1, -1);
+    }
+    return p;
+  });
+}
+
 /**
  * Parses simple TOML format supporting tables, nested keys, strings, booleans, numbers, and arrays.
  */
@@ -98,10 +134,32 @@ export function parseToml(content: string): ParsedToml {
     const line = (commentIdx >= 0 ? rawLine.slice(0, commentIdx) : rawLine).trim();
     if (!line) continue;
 
+    // Array of tables: [[table]] or [[table.subtable]]
+    if (line.startsWith("[[") && line.endsWith("]]")) {
+      const inner = line.slice(2, -2).trim();
+      const parts = splitTomlKeyPath(inner);
+      let cur = result;
+      for (let p = 0; p < parts.length - 1; p++) {
+        const part = parts[p];
+        if (!cur[part] || typeof cur[part] !== "object") {
+          cur[part] = {};
+        }
+        cur = cur[part];
+      }
+      const last = parts[parts.length - 1];
+      if (!Array.isArray(cur[last])) {
+        cur[last] = [];
+      }
+      const newObj = {};
+      cur[last].push(newObj);
+      currentTable = newObj;
+      continue;
+    }
+
     // Table header: [table] or [table.subtable]
-    const tableMatch = line.match(/^\[([A-Za-z0-9_.-]+)\]$/);
-    if (tableMatch) {
-      const parts = tableMatch[1].split(".");
+    if (line.startsWith("[") && line.endsWith("]")) {
+      const inner = line.slice(1, -1).trim();
+      const parts = splitTomlKeyPath(inner);
       let cur = result;
       for (const part of parts) {
         if (!cur[part] || typeof cur[part] !== "object" || Array.isArray(cur[part])) {
@@ -116,14 +174,24 @@ export function parseToml(content: string): ParsedToml {
     // Key-value pair: key = value
     const kvMatch = line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.*)$/);
     if (!kvMatch) {
-      if (line.startsWith("[") && !tableMatch) {
-        throw new Error(`Malformed TOML table header: ${line}`);
-      }
       continue;
     }
 
     const key = kvMatch[1].trim();
-    const rawVal = kvMatch[2].trim();
+    let rawVal = kvMatch[2].trim();
+
+    // Multi-line array support: [ ... \n ... ]
+    if (rawVal.startsWith("[") && !rawVal.endsWith("]")) {
+      while (!rawVal.endsWith("]") && i + 1 < lines.length) {
+        i++;
+        const nextRaw = lines[i];
+        const nextComment = nextRaw.indexOf("#");
+        const nextClean = (nextComment >= 0 ? nextRaw.slice(0, nextComment) : nextRaw).trim();
+        if (nextClean) {
+          rawVal += " " + nextClean;
+        }
+      }
+    }
 
     currentTable[key] = parseTomlValue(rawVal);
   }
@@ -726,7 +794,7 @@ export class GrokBuildAdapter implements HostAdapter {
     };
 
     // Project scope
-    if (scope !== "user" && workspaceRoot) {
+    if (scope !== "user" && (scope as any) !== "global" && workspaceRoot) {
       const projResult = checkTomlForCompanion(layered.projectConfig, layered.projectFile, "project");
       if (projResult) return projResult;
     }
@@ -738,10 +806,10 @@ export class GrokBuildAdapter implements HostAdapter {
     }
 
     const defaultTarget =
-      scope === "user" || !workspaceRoot
+      scope === "user" || (scope as any) === "global" || !workspaceRoot
         ? path.join(process.env.GROK_HOME || path.join(os.homedir(), ".grok"), "config.toml")
         : path.join(workspaceRoot, ".grok", "config.toml");
-    const resolvedScope: "project" | "global" = scope === "user" || !workspaceRoot ? "global" : "project";
+    const resolvedScope: "project" | "global" = scope === "user" || (scope as any) === "global" || !workspaceRoot ? "global" : "project";
 
     return {
       registered: false,
@@ -760,10 +828,10 @@ export class GrokBuildAdapter implements HostAdapter {
   ): Promise<CompanionRegistrationPreview> {
     const workspace = workspaceRoot || process.cwd();
     const targetFile =
-      scope === "user" || !workspaceRoot
+      scope === "user" || (scope as any) === "global" || !workspaceRoot
         ? path.join(process.env.GROK_HOME || path.join(os.homedir(), ".grok"), "config.toml")
         : path.join(workspace, ".grok", "config.toml");
-    const resolvedScope: "project" | "global" = scope === "user" || !workspaceRoot ? "global" : "project";
+    const resolvedScope: "project" | "global" = scope === "user" || (scope as any) === "global" || !workspaceRoot ? "global" : "project";
 
     let existingContent: string | null = null;
     if (fs.existsSync(targetFile)) {
@@ -1353,7 +1421,7 @@ export class GrokBuildAdapter implements HostAdapter {
   }
 
   private resolveConfigPath(workspaceRoot?: string, scope?: "project" | "user"): string | null {
-    if (scope === "user") {
+    if (scope === "user" || (scope as any) === "global") {
       const grokHome = process.env.GROK_HOME || path.join(os.homedir(), ".grok");
       const p = path.join(grokHome, "config.toml");
       return fs.existsSync(p) ? p : null;

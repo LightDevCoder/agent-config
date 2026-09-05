@@ -16,3 +16,11 @@ delete process.env.DSH_SESSION_ID;
 delete process.env.GEMINI_CLI_SESSION_ID;
 delete process.env.HERMES_SESSION_ID;
 delete process.env.ZCODE_SESSION_ID;
+
+import path from "node:path";
+// Mask global agent-config binary from test PATH so tests asserting uninstalled/unreachable process states remain hermetic
+if (process.env.PATH) {
+  process.env.PATH = process.env.PATH.split(path.delimiter)
+    .filter((dir) => !dir.includes(".local/bin") && !dir.includes(".npm-global"))
+    .join(path.delimiter);
+}

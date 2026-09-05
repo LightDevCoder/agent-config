@@ -235,6 +235,7 @@ Options:
       preview_hash: preview.preview_hash,
       baseline_hash: preview.baseline_hash,
       explicit_approval: true,
+      frozen_preview: preview,
     });
 
     const isHealthy = applyResult.validation?.healthy === true;
