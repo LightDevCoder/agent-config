@@ -116,19 +116,28 @@ export class PiAdapter implements HostAdapter {
   }
 
   private modelPair(modelId: string, workspace?: string): { provider: string; model: string } | undefined {
-    const config = this.readEffectiveConfig(workspace);
-    const activeModel = process.env.PI_MODEL || config?.defaultModel;
-    const activeProvider = process.env.PI_MODEL ? process.env.PI_PROVIDER : config?.defaultProvider;
-    if (activeProvider && (modelId === activeModel || modelId === `${activeProvider}/${activeModel}`)) {
-      return { provider: activeProvider, model: activeModel };
-    }
     try {
       const data = JSON.parse(fs.readFileSync(path.join(this.getGlobalPiDir(), "models.json"), "utf-8"));
       const pairs = Object.entries(data.providers || {}).flatMap(([provider, spec]: [string, any]) =>
         (spec.models || []).filter((m: any) => modelId === `${provider}/${m.id}` || modelId === m.id)
           .map((m: any) => ({ provider, model: m.id })));
-      return pairs.length === 1 ? pairs[0] : undefined;
-    } catch { return undefined; }
+      if (pairs.length) return pairs.length === 1 ? pairs[0] : undefined;
+    } catch { /* Fall back only to pairing independent of the target file. */ }
+    let globalConfig: any;
+    try {
+      globalConfig = JSON.parse(fs.readFileSync(path.join(this.getGlobalPiDir(), "settings.json"), "utf-8"));
+    } catch { /* No global pairing evidence. */ }
+    const activeModel = process.env.PI_MODEL || globalConfig?.defaultModel;
+    const activeProvider = process.env.PI_MODEL ? process.env.PI_PROVIDER : globalConfig?.defaultProvider;
+    if (activeProvider && (modelId === activeModel || modelId === `${activeProvider}/${activeModel}`)) {
+      return { provider: activeProvider, model: activeModel };
+    }
+    // A qualified requested identity is fixed even when only project evidence exists.
+    const config = this.readEffectiveConfig(workspace);
+    if (config?.defaultProvider && modelId === `${config.defaultProvider}/${config.defaultModel}`) {
+      return { provider: config.defaultProvider, model: config.defaultModel };
+    }
+    return undefined;
   }
 
   async inspectModels(workspaceRoot?: string): Promise<HostModel[]> {
@@ -643,6 +652,11 @@ export class PiAdapter implements HostAdapter {
         formatting
       );
       currentText = jsonc.applyEdits(currentText, thinkingEdits);
+      const pairKey = `${pair.provider}/${pair.model}`;
+      if (this.readEffectiveConfig(workspace)?.modelThinkingLevels?.[pairKey] !== undefined) {
+        currentText = jsonc.applyEdits(currentText,
+          jsonc.modify(currentText, ["modelThinkingLevels", pairKey], thinkingLevel, formatting));
+      }
     }
 
     const files: RenderedFile[] = [
@@ -764,9 +778,13 @@ export class PiAdapter implements HostAdapter {
     if (expectedEffort) {
       const resolved = await this.resolveReasoningPolicy(expectedEffort, expectedModel, workspace);
       const expectedThinking = resolved?.host_value || expectedEffort;
-      if (!resolved || parsed?.defaultThinkingLevel !== expectedThinking) {
+      const pairKey = expectedPair ? `${expectedPair.provider}/${expectedPair.model}` : undefined;
+      const effective = this.readEffectiveConfig(workspace);
+      const actualThinking = (pairKey ? effective?.modelThinkingLevels?.[pairKey] : undefined)
+        ?? parsed?.defaultThinkingLevel;
+      if (!resolved || actualThinking !== expectedThinking) {
         errors.push(
-          `defaultThinkingLevel mismatch: expected '${expectedThinking}', got '${parsed?.defaultThinkingLevel}'`
+          `Thinking level mismatch: expected '${expectedThinking}', got '${actualThinking}'`
         );
       }
     }
@@ -867,7 +885,8 @@ export class PiAdapter implements HostAdapter {
         try {
           const parsed = jsonc.parse(fs.readFileSync(projectSettings, "utf-8"));
           if (parsed && typeof parsed === "object") {
-            result = { ...result, ...parsed };
+            const modelThinkingLevels = { ...result.modelThinkingLevels, ...parsed.modelThinkingLevels };
+            result = { ...result, ...parsed, modelThinkingLevels };
             found = true;
           }
         } catch {

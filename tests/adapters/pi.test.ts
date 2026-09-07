@@ -275,6 +275,40 @@ describe("Pi Native Adapter Tests", () => {
       await expect(adapter.renderConfiguration({ execution: { model: "gemini-3.8-flash-high", effort: "max" } } as ExecutionConfig,
         undefined, workspaceDir)).rejects.toThrow(/Unevidenced/);
     });
+    it("rejects provider drift for an unchanged bare model ID", async () => {
+      const adapter = new PiAdapter();
+      const plan = { execution: { model: "gemini-3.8-flash-high", effort: "high" } } as ExecutionConfig;
+      const preview = await adapter.renderConfiguration(plan, undefined, workspaceDir);
+      await adapter.applyConfiguration(preview.preview_id, preview, workspaceDir);
+      const actual = JSON.parse(preview.files![0].content);
+      actual.defaultProvider = "wrong-provider";
+      await fsp.writeFile(preview.mutation_targets[0], JSON.stringify(actual));
+      expect((await adapter.validateConfiguration(plan, workspaceDir)).valid).toBe(false);
+    });
+
+    it("updates an inherited per-model thinking override and detects later drift", async () => {
+      const settingsPath = path.join(piAgentDir, "settings.json");
+      const settings = JSON.parse(await fsp.readFile(settingsPath, "utf-8"));
+      const key = "test-provider/gemini-3.8-flash-high";
+      settings.modelThinkingLevels = { [key]: "low", "other/model": "medium" };
+      await fsp.writeFile(settingsPath, JSON.stringify(settings));
+      await fsp.mkdir(path.join(workspaceDir, ".pi"), { recursive: true });
+      await fsp.writeFile(path.join(workspaceDir, ".pi", "settings.json"), JSON.stringify({
+        modelThinkingLevels: { "unrelated/model": "low" },
+      }));
+      const adapter = new PiAdapter();
+      const plan = { execution: { model: "gemini-3.8-flash-high", effort: "high" } } as ExecutionConfig;
+      const preview = await adapter.renderConfiguration(plan, undefined, workspaceDir);
+      await adapter.applyConfiguration(preview.preview_id, preview, workspaceDir);
+      const actual = JSON.parse(preview.files![0].content);
+      expect(actual.modelThinkingLevels[key]).toBe("high");
+      expect(JSON.parse(await fsp.readFile(settingsPath, "utf-8"))).toEqual(settings);
+      expect((await adapter.validateConfiguration(plan, workspaceDir)).valid).toBe(true);
+      actual.modelThinkingLevels[key] = "low";
+      await fsp.writeFile(preview.mutation_targets[0], JSON.stringify(actual));
+      expect((await adapter.validateConfiguration(plan, workspaceDir)).valid).toBe(false);
+    });
+
     it("does not validate project settings that Pi has not trusted", async () => {
       const adapter = new PiAdapter();
       const plan = { execution: { model: "gemini-3.8-flash-high" } } as ExecutionConfig;
