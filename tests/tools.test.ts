@@ -360,10 +360,29 @@ describe("Core MCP Tools Surface (8 Tools)", () => {
   describe("7. validate_configuration", () => {
     it("should return valid=true when adapter verifies state", async () => {
       const res = await handleValidateConfiguration(
-        { expected_config: { model: "o3-mini" }, workspace: workspaceDir },
+        { expected_config: validExecutionConfig, workspace: workspaceDir },
         getContext()
       );
       expect(res.valid).toBe(true);
+    });
+  });
+
+  describe("Validation baseline rejection", () => {
+    it.each([{}, { expected_config: {} }, { preview_id: "does-not-exist" },
+      { preview_id: "does-not-exist", expected_config: validExecutionConfig }])(
+      "rejects missing or invalid baselines %j", async (input) => {
+        await expect(handleValidateConfiguration({ ...input, workspace: workspaceDir }, getContext()))
+          .rejects.toThrow(/expected_config|preview_id/);
+      }
+    );
+
+    it("keeps validation tied to the preview workspace and host", async () => {
+      await profileStore.saveProfile({ ...validProfile, scope: { type: "project", workspace: workspaceDir } });
+      const preview = await handlePreviewConfiguration({ config: validExecutionConfig, workspace: workspaceDir }, getContext());
+      await expect(handleValidateConfiguration({ preview_id: preview.preview_id, workspace: tempDir }, getContext()))
+        .rejects.toThrow(/workspace mismatch/);
+      await expect(handleValidateConfiguration({ preview_id: preview.preview_id, workspace: workspaceDir, host_id: "codex" }, getContext()))
+        .rejects.toThrow(/host mismatch/);
     });
   });
 

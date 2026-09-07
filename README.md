@@ -27,7 +27,7 @@ agent-config (Companion MCP Server)
        └─ validate_configuration: Confirms applied state matches expected
        ▼
 Host Adapters
-       ├─ Native (9): Codex, Claude Code, Antigravity / agy, DeepSeek Harness (DSH), OpenCode, ZCode, Cursor, Grok Build, Hermes
+       ├─ Native (10): Codex, Claude Code, Antigravity / agy, DeepSeek Harness (DSH), OpenCode, ZCode, Cursor, Grok Build, Hermes, Pi
        └─ Generic Adapter (plan-only fallback)
 ```
 
@@ -104,7 +104,7 @@ agent-config setup --check
 | `save_profile` | Validates against schema and host inventory, then atomically persists the profile. |
 | `preview_configuration` | Previews configuration changes and produces a verifiable preview hash/ID. |
 | `apply_configuration` | Applies a previously previewed configuration via the corresponding Host Adapter. |
-| `validate_configuration` | Confirms the host runtime state reflects the applied configuration. |
+| `validate_configuration` | Compares host state with a canonical `expected_config` or a known workspace/host-bound `preview_id`; rejects missing or invalid baselines. |
 | `reset_profile` | Clears stored profile configuration for the current host and workspace. |
 
 ## Canonical Schemas
@@ -132,11 +132,10 @@ Schemas are defined under `schemas/` and canonical contracts under `src/contract
 | Cursor | Native | Project / User | `.cursor/settings.json` | `.cursor/mcp.json` |
 | Grok Build | Native | Project / User | `.grok/config.toml` | `.grok/config.toml` |
 | Hermes | Native | User / Project | `~/.hermes/config.json` | `~/.hermes/config.json` |
+| Pi Coding Agent | Native settings; MCP extension required | Project / User | `.pi/settings.json` / `~/.pi/agent/settings.json` | `.pi/mcp.json` (project) / `~/.pi/agent/mcp.json` (user) |
 | Generic / Fallback | Fallback | Plan-only | N/A (read-only execution plan) | Manual export |
 
-### Deferred Harnesses
-
-- **Pi**: Explicitly DEFERRED (SPEC §3). Pi is not included as a native adapter in v1; environments using Pi route through the Generic / manual fallback.
+Pi MCP registration requires an installed and enabled `npm:pi-mcp-adapter` package and a Pi restart/reload. Project settings additionally require Pi project trust. The adapter verifies model/provider pairs and model-specific thinking evidence; extension dispatch capabilities remain unknown until evidenced. See [Pi adapter](docs/adapters/pi.md).
 
 ## Setup CLI & Companion Health Verification
 

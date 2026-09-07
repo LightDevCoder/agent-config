@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fsp from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -35,6 +35,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await env.cleanup();
   });
 
@@ -107,6 +108,24 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
           await fsp.mkdir(path.join(dir, ".grok"), { recursive: true });
         },
         expectedTargetSubpath: path.join(".grok", "config.toml"),
+      },
+      {
+        id: "pi",
+        name: "Pi Coding Agent",
+        setupWorkspace: async (dir) => {
+          const globalPi = path.join(os.homedir(), ".pi", "agent");
+          await fsp.mkdir(globalPi, { recursive: true });
+          await fsp.writeFile(path.join(globalPi, "settings.json"), '{"defaultProjectTrust":"always"}');
+          const piDir = path.join(dir, ".pi");
+          const extension = path.join(piDir, "npm", "node_modules", "pi-mcp-adapter");
+          await fsp.mkdir(extension, { recursive: true });
+          await fsp.writeFile(path.join(extension, "package.json"), '{"name":"pi-mcp-adapter"}');
+          await fsp.writeFile(path.join(piDir, "settings.json"), '{"packages":["npm:pi-mcp-adapter"]}');
+          vi.spyOn(adapterRegistry.getAdapter("pi")!, "inspectVersion").mockResolvedValue({
+            version: "0.85.1", compatibility: "supported", fail_closed_for_mutation: false,
+          });
+        },
+        expectedTargetSubpath: path.join(".pi", "mcp.json"),
       },
     ];
 
@@ -548,6 +567,7 @@ describe("Cross-Harness Companion Setup & Safe Mutation Lifecycle (SPEC §13, §
     });
 
     afterEach(async () => {
+    vi.restoreAllMocks();
       await client.close();
       await server.close();
     });

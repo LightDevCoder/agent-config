@@ -22,6 +22,8 @@ export const PROTECTED_USER_PATHS = [
   path.join(".config", "gemini"),
   ".dsh",
   path.join(".config", "dsh"),
+  ".pi",
+  path.join(".config", "pi"),
 ];
 
 /**
@@ -63,6 +65,15 @@ export const HOST_ENV_VARS_TO_CLEAN = [
   "GROK_MAX_CONCURRENCY",
   "GROK_PARALLELISM",
   "GROK_WORKTREE_ISOLATION",
+  "PI_CODING_AGENT",
+  "PI_CODING_AGENT_DIR",
+  "PI_SESSION_FILE",
+  "PI_SESSION_ID",
+  "PI_MODEL",
+  "PI_PROVIDER",
+  "PI_REASONING_LEVEL",
+  "PI_VERSION",
+  "AI_AGENT",
 ];
 
 export interface IsolatedEnvOptions {

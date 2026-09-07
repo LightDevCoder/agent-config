@@ -505,12 +505,12 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
       const adapters = registry.listAdapters();
       const ids = adapters.map((a) => a.id);
 
-      // Verify exact count: 9 native adapters + 1 fallback generic adapter
+      // Verify exact count: 10 native adapters + 1 fallback generic adapter
       const nativeAdapters = adapters.filter((a) => a.id !== "generic");
-      expect(nativeAdapters.length).toBe(9);
-      expect(adapters.length).toBe(10);
+      expect(nativeAdapters.length).toBe(10);
+      expect(adapters.length).toBe(11);
 
-      // Verify the exact 9 native adapters
+      // Verify the exact 10 native adapters
       expect(ids).toContain("codex");
       expect(ids).toContain("opencode");
       expect(ids).toContain("claude-code");
@@ -520,6 +520,7 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
       expect(ids).toContain("grok-build");
       expect(ids).toContain("zcode");
       expect(ids).toContain("hermes");
+      expect(ids).toContain("pi");
 
       // Verify generic fallback
       expect(ids).toContain("generic");
@@ -532,8 +533,8 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
       expect(ids).not.toContain("windsurf");
       expect(ids).not.toContain("cline");
       expect(ids).not.toContain("roo-code");
-      // Verify Pi is deferred and NOT in native registry
-      expect(ids).not.toContain("pi");
+      // Verify Pi is native and in registry
+      expect(ids).toContain("pi");
     });
 
     it("resolves specific adapter when host_id is supplied", async () => {
@@ -594,6 +595,14 @@ describe("Host Adapters (Codex, OpenCode, Generic, Registry)", () => {
 
       const resolved = await registry.resolveAdapter(workspaceDir);
       expect(resolved.id).toBe("grok-build");
+    });
+
+    it("resolves Pi adapter when workspace has .pi directory", async () => {
+      const registry = new AdapterRegistry();
+      await fsp.mkdir(path.join(workspaceDir, ".pi"), { recursive: true });
+
+      const resolved = await registry.resolveAdapter(workspaceDir);
+      expect(resolved.id).toBe("pi");
     });
   });
 

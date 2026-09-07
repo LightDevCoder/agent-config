@@ -3,6 +3,8 @@ import fsp from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { parse } from "smol-toml";
+import { updateRootString } from "../../src/adapters/codex/toml.js";
 import { CodexAdapter } from "../../src/adapters/codex/index.js";
 import { ExecutionConfig } from "../../src/profile/schema.js";
 
@@ -115,6 +117,48 @@ describe("Codex Native Adapter Hardening Tests (§25, §26, §74)", () => {
       expect(caps.capabilities.reasoning?.state).toBe("available");
       expect(caps.supported_effort_values).toEqual(["low", "medium", "high", "xhigh"]);
     });
+  });
+
+  describe("Root TOML and ordered effort regressions", () => {
+    it("preserves named profiles and validates only root settings", async () => {
+      const adapter = new CodexAdapter();
+      const configPath = path.join(workspaceDir, ".codex", "config.toml");
+      await fsp.mkdir(path.dirname(configPath), { recursive: true });
+      const profile = '[profiles.personal]\nmodel = "keep-me"\nmodel_reasoning_effort = "low"\n';
+      await fsp.writeFile(configPath, profile);
+      const plan = { execution: { model: "keep-me", effort: "low" } } as ExecutionConfig;
+      expect((await adapter.validateConfiguration(plan, workspaceDir)).valid).toBe(false);
+      const rendered = await adapter.renderConfiguration(plan, undefined, workspaceDir);
+      expect(rendered.files![0].content).toContain(profile);
+      expect(parse(rendered.files![0].content).model).toBe("keep-me");
+      await adapter.applyConfiguration(rendered.preview_id, rendered, workspaceDir);
+      expect((await adapter.validateConfiguration(plan, workspaceDir)).valid).toBe(true);
+    });
+
+    it.each([
+      '# retained\n"model" = "old"\n[profiles.personal]\nmodel = "keep"\n',
+      "note = '''\nmodel = \"inside-string\"\n[fake-table]\n'''\nmodel = 'old'\n[actual]\nkeep = true\n",
+      'values = [\n  "[fake]",\n]\nmodel = "old"\n',
+      'model = """old\nmultiline"""\n[actual]\nkeep = true\n',
+    ])("updates only the real root value in %s", (content) => {
+      const before = parse(content);
+      const updated = updateRootString(content, "model", 'new\\path"quoted');
+      expect(parse(updated)).toEqual({ ...before, model: 'new\\path"quoted' });
+    });
+
+    it("rejects malformed TOML before rendering a write", () => {
+      expect(() => updateRootString('model = "unterminated', "model", "new")).toThrow();
+    });
+
+    it.each([["low", "high", "max"], ["low", "high", "xhigh", "max"], ["standard", "deep"]])(
+      "resolves the last evidenced level for %j", async (...levels) => {
+        const configPath = path.join(workspaceDir, ".codex", "config.toml");
+        await fsp.mkdir(path.dirname(configPath), { recursive: true });
+        await fsp.writeFile(configPath, `supported_effort_values = ${JSON.stringify(levels)}\n`);
+        expect(await new CodexAdapter().resolveReasoningPolicy("highest-supported", undefined, workspaceDir))
+          .toEqual({ host_field: "model_reasoning_effort", host_value: levels.at(-1) });
+      }
+    );
   });
 
   describe("Apply Validation: Decomposed Worker Model & Reasoning Effort (§74)", () => {

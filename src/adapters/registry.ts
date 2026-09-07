@@ -9,6 +9,7 @@ import { DshAdapter } from "./dsh/index.js";
 import { GrokBuildAdapter } from "./grok-build/index.js";
 import { ZCodeAdapter } from "./zcode/index.js";
 import { HermesAdapter } from "./hermes/index.js";
+import { PiAdapter } from "./pi/index.js";
 
 export type DisambiguationHandler = (
   candidates: string[]
@@ -44,7 +45,7 @@ export class AdapterRegistry {
   constructor(defaultAdapter?: HostAdapter) {
     this.defaultAdapter = defaultAdapter || new GenericAdapter();
 
-    // Register built-in adapters (exactly 9 native adapters + 1 fallback)
+    // Register built-in adapters (10 native adapters + 1 fallback)
     this.register(new CodexAdapter());
     this.register(new OpenCodeAdapter());
     this.register(new ClaudeCodeAdapter());
@@ -54,6 +55,7 @@ export class AdapterRegistry {
     this.register(new GrokBuildAdapter());
     this.register(new ZCodeAdapter());
     this.register(new HermesAdapter());
+    this.register(new PiAdapter());
     this.register(this.defaultAdapter);
   }
 

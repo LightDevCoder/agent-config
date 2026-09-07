@@ -21,6 +21,7 @@ import {
 } from "../contract.js";
 import { ExecutionConfig, AgentProfile } from "../../profile/schema.js";
 import { createUnifiedDiff } from "../diff.js";
+import { rootValue, updateRootString } from "./toml.js";
 
 /**
  * Codex host adapter implementing authentic inspection, model enumeration,
@@ -734,9 +735,7 @@ export class CodexAdapter implements HostAdapter {
 
     if (supported.length > 0) {
       if (normalized === "highest-supported") {
-        if (supported.includes("xhigh")) resolvedValue = "xhigh";
-        else if (supported.includes("high")) resolvedValue = "high";
-        else resolvedValue = supported[supported.length - 1];
+        resolvedValue = supported[supported.length - 1];
       } else if (normalized === "lowest-sufficient" || normalized === "lowest-supported") {
         if (supported.includes("low")) resolvedValue = "low";
         else resolvedValue = supported[0];
@@ -1002,32 +1001,23 @@ export class CodexAdapter implements HostAdapter {
   }
 
   private extractTomlString(content: string, key: string): string | null {
-    const match = content.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]+)"`, "m"));
-    return match ? match[1] : null;
+    const value = rootValue(content, key);
+    return typeof value === "string" ? value : null;
   }
 
   private extractTomlValue(content: string, key: string): string | null {
-    const match = content.match(new RegExp(`^\\s*${key}\\s*=\\s*([0-9a-zA-Z_.-]+)`, "m"));
-    return match ? match[1] : null;
+    const value = rootValue(content, key);
+    return typeof value === "number" || typeof value === "boolean" ? String(value) : null;
   }
 
   private extractTomlArray(content: string, key: string): string[] | null {
-    const match = content.match(new RegExp(`^\\s*${key}\\s*=\\s*\\[([^\\]]+)\\]`, "m"));
-    if (!match) return null;
-    return match[1]
-      .split(",")
-      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-      .filter((s) => s.length > 0);
+    const value = rootValue(content, key);
+    return Array.isArray(value) && value.every((item) => typeof item === "string")
+      ? value as string[] : null;
   }
 
   private updateTomlKeyValue(content: string, key: string, value: string): string {
-    const lineRegex = new RegExp(`^(\\s*${key}\\s*=\\s*).*$`, "m");
-    const quoted = `"${value.replace(/"/g, '\\"')}"`;
-    if (lineRegex.test(content)) {
-      return content.replace(lineRegex, `${key} = ${quoted}`);
-    }
-    const trimmed = content.trim();
-    return trimmed ? `${key} = ${quoted}\n${trimmed}\n` : `${key} = ${quoted}\n`;
+    return updateRootString(content, key, value);
   }
 
   private extractTomlMcpServer(

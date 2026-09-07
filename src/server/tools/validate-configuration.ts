@@ -1,6 +1,7 @@
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolContext } from "./context.js";
+import { validateExecutionConfigAgainstJsonSchema } from "../../profile/validator.js";
 import {
   ValidateConfigurationInputSchema,
   ValidateConfigurationOutputSchema,
@@ -23,21 +24,31 @@ export async function handleValidateConfiguration(
   context: ToolContext
 ): Promise<ValidateConfigurationResult> {
   const workspace = path.resolve(params.workspace || process.cwd());
-  const adapter = await context.adapterRegistry.resolveAdapter(
-    workspace,
-    params.host_id
-  );
-
   let expected = params.expected_config;
-  if (!expected && params.preview_id) {
+  let adapterId = params.host_id;
+  if (params.preview_id !== undefined) {
     const preview = context.previewManager.getPreview(params.preview_id);
-    if (preview) {
-      expected = preview.config;
+    if (!preview) {
+      throw new Error("Unknown preview_id. Supply an existing preview or an explicit expected_config.");
     }
+    if (preview.workspace !== workspace) throw new Error("Preview workspace mismatch.");
+    if (params.host_id && params.host_id !== preview.host_identity && params.host_id !== preview.adapter_id) {
+      throw new Error("Preview host mismatch.");
+    }
+    adapterId = preview.adapter_id;
+    expected ??= preview.config;
   }
+  const validation = validateExecutionConfigAgainstJsonSchema(expected);
+  if (!validation.valid) {
+    throw new Error(`A canonical expected_config or existing preview_id is required: ${validation.errors?.join("; ")}`);
+  }
+  const adapter = params.preview_id !== undefined
+    ? context.adapterRegistry.getAdapter(adapterId!)
+    : await context.adapterRegistry.resolveAdapter(workspace, adapterId);
+  if (!adapter) throw new Error("Preview adapter is no longer available.");
 
   const validationResult = await adapter.validateConfiguration(
-    (expected as any) || {},
+    expected as any,
     workspace
   );
 
@@ -49,7 +60,7 @@ export async function handleValidateConfiguration(
       (validationResult.valid
         ? "Actual host configuration matches expected state."
         : "Actual host configuration does not match expected state."),
-    details: validationResult.errors || validationResult.details,
+    details: validationResult.errors ? { errors: validationResult.errors } : validationResult.details,
   };
 }
 

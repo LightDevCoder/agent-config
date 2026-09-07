@@ -10,31 +10,20 @@ import { DshAdapter } from "../src/adapters/dsh/index.js";
 import { GrokBuildAdapter } from "../src/adapters/grok-build/index.js";
 import { ZCodeAdapter } from "../src/adapters/zcode/index.js";
 import { HermesAdapter } from "../src/adapters/hermes/index.js";
+import { PiAdapter } from "../src/adapters/pi/index.js";
 import { AdapterRegistry } from "../src/adapters/registry.js";
 
 describe("Shared Adapter Contract Conformance Verification (§81)", () => {
-  describe("Exact Native Adapter Count & Pi Exclusion (§2, §3, §70)", () => {
-    it("asserts exact native adapter count = 9, generic fallback = 1, and Pi is NOT present in native adapters", () => {
+  describe("Exact Native Adapter Count & Registration (§2, §3, §70)", () => {
+    it("asserts exact native adapter count = 10, generic fallback = 1, and Pi is present in native adapters", () => {
       const registry = new AdapterRegistry();
       const allAdapters = registry.listAdapters();
       const nativeAdapters = allAdapters.filter((a) => a.id !== "generic");
 
-      expect(nativeAdapters.length).toBe(9);
-      expect(allAdapters.length).toBe(10);
+      expect(nativeAdapters.length).toBe(10);
+      expect(allAdapters.length).toBe(11);
 
       const nativeIds = nativeAdapters.map((a) => a.id).sort();
-      const expectedNativeIds = [
-        "antigravity", // gemini-cli family
-        "claude-code",
-        "codex",
-        "cursor",
-        "dsh",
-        "gemini-cli",
-        "grok-build",
-        "hermes",
-        "opencode",
-        "zcode",
-      ];
       // Note: gemini-cli is the canonical adapter ID for antigravity/gemini family in registry
       expect(nativeIds).toEqual([
         "claude-code",
@@ -45,11 +34,12 @@ describe("Shared Adapter Contract Conformance Verification (§81)", () => {
         "grok-build",
         "hermes",
         "opencode",
+        "pi",
         "zcode",
       ]);
 
-      // Assert Pi is NOT in registry
-      expect(allAdapters.map((a) => a.id)).not.toContain("pi");
+      // Assert Pi is in registry
+      expect(allAdapters.map((a) => a.id)).toContain("pi");
     });
   });
 
@@ -145,6 +135,16 @@ describe("Shared Adapter Contract Conformance Verification (§81)", () => {
       execution_id: "hermes-conformance-plan",
       controller: { model: "hermes-default" },
       execution: { model: "hermes-default" },
+    },
+  });
+
+  // Pi Adapter
+  runAdapterConformanceSuite(() => new PiAdapter(), {
+    adapterName: "PiAdapter",
+    sampleExecutionConfig: {
+      execution_id: "pi-conformance-plan",
+      controller: { model: "gemini-3.8-flash-high" },
+      execution: { model: "gemini-3.8-flash-high" },
     },
   });
 });

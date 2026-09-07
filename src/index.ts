@@ -18,5 +18,6 @@ export * from "./adapters/dsh/index.js";
 export * from "./adapters/grok-build/index.js";
 export * from "./adapters/zcode/index.js";
 export * from "./adapters/hermes/index.js";
+export * from "./adapters/pi/index.js";
 export * from "./setup/index.js";
 
