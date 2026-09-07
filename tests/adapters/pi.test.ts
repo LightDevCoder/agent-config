@@ -275,6 +275,26 @@ describe("Pi Native Adapter Tests", () => {
       await expect(adapter.renderConfiguration({ execution: { model: "gemini-3.8-flash-high", effort: "max" } } as ExecutionConfig,
         undefined, workspaceDir)).rejects.toThrow(/Unevidenced/);
     });
+    it("resolves configured effort for the requested provider, not a same-named active model", async () => {
+      process.env.PI_MODEL = "shared-model";
+      process.env.PI_PROVIDER = "provider-a";
+      process.env.PI_REASONING_LEVEL = "low";
+      await fsp.writeFile(path.join(piAgentDir, "settings.json"), JSON.stringify({
+        defaultProvider: "provider-a", defaultModel: "shared-model", defaultThinkingLevel: "low",
+        modelThinkingLevels: { "provider-a/shared-model": "low", "provider-b/shared-model": "high" },
+      }));
+      await fsp.writeFile(path.join(piAgentDir, "models.json"), JSON.stringify({ providers: {
+        "provider-a": { models: [{ id: "shared-model", reasoning: true, thinkingLevelMap: { low: "low" } }] },
+        "provider-b": { models: [{ id: "shared-model", reasoning: true, thinkingLevelMap: {
+          off: null, minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null,
+        } }] },
+      } }));
+      const adapter = new PiAdapter();
+      expect(await adapter.resolveReasoningPolicy("configured", "provider-b/shared-model", workspaceDir))
+        .toEqual({ host_field: "defaultThinkingLevel", host_value: "high" });
+      expect(await adapter.resolveReasoningPolicy("low", "provider-b/shared-model", workspaceDir)).toBeUndefined();
+    });
+
     it("rejects provider drift for an unchanged bare model ID", async () => {
       const adapter = new PiAdapter();
       const plan = { execution: { model: "gemini-3.8-flash-high", effort: "high" } } as ExecutionConfig;

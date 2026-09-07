@@ -274,6 +274,9 @@ export class PiAdapter implements HostAdapter {
     const activeModel = process.env.PI_MODEL || config?.defaultModel;
     const pair = modelId ? this.modelPair(modelId, workspaceRoot) : undefined;
     const targetModel = pair?.model || modelId || activeModel;
+    const activeProvider = process.env.PI_MODEL ? process.env.PI_PROVIDER : config?.defaultProvider;
+    const targetProvider = pair?.provider || activeProvider;
+    const isActivePair = targetModel === activeModel && targetProvider === activeProvider;
     const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
     let supported: string[] = [];
     // Model maps have null holes; an arbitrary settings file is not model evidence.
@@ -295,12 +298,12 @@ export class PiAdapter implements HostAdapter {
       } catch { /* Unreadable or malformed model evidence stays unknown. */ }
     }
     const observed = process.env.PI_REASONING_LEVEL;
-    if (!supported.length && targetModel === activeModel && observed && levels.includes(observed)) {
+    if (!supported.length && isActivePair && observed && levels.includes(observed)) {
       supported = [observed];
     }
-    const configured = config?.modelThinkingLevels?.[`${process.env.PI_PROVIDER || config?.defaultProvider}/${targetModel}`]
+    const configured = config?.modelThinkingLevels?.[`${targetProvider}/${targetModel}`]
       || config?.defaultThinkingLevel;
-    const defaultValue = targetModel === activeModel && observed ? observed : configured;
+    const defaultValue = isActivePair && observed ? observed : configured;
     return {
       native_field: "defaultThinkingLevel",
       supported_values: supported,
