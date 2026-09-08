@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { PiAdapter } from "../../src/adapters/pi/index.js";
-import { ExecutionConfig } from "../../src/profile/schema.js";
+import { ExecutionConfig, ReasoningSchema } from "../../src/profile/schema.js";
 
 describe("Pi Native Adapter Tests", () => {
   let tempDir: string;
@@ -231,6 +231,16 @@ describe("Pi Native Adapter Tests", () => {
 
       const validation = await adapter.validateConfiguration(plan, workspaceDir);
       expect(validation.valid).toBe(true);
+    });
+
+    it("accepts the canonical default reasoning policy", async () => {
+      const reasoning = ReasoningSchema.parse({ state: "enabled", policy: "default" });
+      const adapter = new PiAdapter();
+      const plan = { execution: { model: "gemini-3.8-flash-high", reasoning } } as ExecutionConfig;
+      const preview = await adapter.renderConfiguration(plan, undefined, workspaceDir);
+      expect(JSON.parse(preview.files![0].content).defaultThinkingLevel).toBe("high");
+      expect(await adapter.resolveReasoningPolicy("default", "gemini-3.8-flash-high", workspaceDir))
+        .toEqual({ host_field: "defaultThinkingLevel", host_value: "high" });
     });
 
     it("resolves abstract reasoning policies correctly", async () => {

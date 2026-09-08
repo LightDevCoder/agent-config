@@ -824,7 +824,7 @@ export class PiAdapter implements HostAdapter {
       else if (supported.includes("minimal")) resolvedValue = "minimal";
       else if (supported.includes("low")) resolvedValue = "low";
       else resolvedValue = supported[0];
-    } else if (normalized === "configured") {
+    } else if (normalized === "default" || normalized === "configured") {
       resolvedValue = options.default_value;
     } else if (supported.includes(normalized)) {
       resolvedValue = normalized;
